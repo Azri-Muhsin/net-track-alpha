@@ -188,13 +188,3 @@ Once started, the foreground service will continuously collect and transmit tele
 * Mobile network coverage analysis
 * Network performance monitoring
 * Research and academic telecom studies
-
----
-
-## Future Improvements
-
-* GPS integration for geospatial signal analysis
-* Secure HTTPS telemetry transmission
-* Offline buffering when connectivity is unavailable
-* Dynamic server configuration from the user interface
-* Real-time monitoring dashboard for incoming telemetry
