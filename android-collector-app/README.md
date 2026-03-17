@@ -1,51 +1,61 @@
-Drive Test Phone Sensor App
-Overview
+# Drive Test Phone Sensor App
 
-The Drive Test Phone Sensor App is an Android-based data collection application designed to capture real-time mobile network telemetry from a smartphone. The application extracts radio network measurements using the Android Telephony API and streams them to a backend server for storage and analysis.
+Android application for real-time cellular network telemetry collection.
 
-This app forms the mobile sensing component of the low-cost drive testing system. It allows smartphones to function as portable network sensors capable of collecting signal strength, network type, and cell information while moving through different geographic locations.
+---
+
+## Overview
+
+The Drive Test Phone Sensor App is an Android-based data collection application designed to capture real-time mobile network telemetry from a smartphone.
+
+The application extracts radio network measurements using the Android Telephony API and streams them to a backend server for storage and analysis.
+
+This app forms the mobile sensing component of a low-cost drive testing system. It allows smartphones to function as portable network sensors capable of collecting signal strength, network type, and cell information while moving through different geographic locations.
 
 The collected data supports network performance monitoring, visualization, and analytics for telecom network evaluation.
 
-System Architecture
+---
+
+## System Architecture
 
 The system consists of three main components:
 
-Phone Sensor App
+### Phone Sensor App
+
 Collects radio signal measurements from the Android device.
 
-Data Receiver Server
+### Data Receiver Server
+
 Receives and stores telemetry data sent from the phone.
 
-Analytics and Visualization Layer
+### Analytics and Visualization Layer
+
 Processes the collected data for dashboards, maps, and network analysis.
 
-The phone app continuously samples cellular information and sends structured JSON payloads to the backend server via HTTP.
+The phone application continuously samples cellular information and sends structured JSON payloads to the backend server via HTTP.
 
-Features
+---
 
-Real-time cellular network telemetry collection
+## Features
 
-Supports LTE, 5G NR, GSM, and WCDMA cell information
+* Real-time cellular network telemetry collection
+* Supports LTE, 5G NR, GSM, and WCDMA cell information
+* Extracts signal metrics including RSRP, RSRQ, and SINR
+* Sequential record generation for reliable data ordering
+* Foreground service for continuous background sensing
+* Network transmission of telemetry to a remote server
+* JSON formatted telemetry records
+* Lightweight Android interface for starting and stopping sensing
 
-Extracts signal metrics including RSRP, RSRQ, and SINR
+---
 
-Sequential record generation for reliable data ordering
-
-Foreground service for continuous background sensing
-
-Network transmission of telemetry to a remote server
-
-JSON formatted telemetry records
-
-Lightweight Android interface for starting and stopping sensing
-
-Data Collected
+## Data Collected
 
 Each telemetry record contains radio network information collected from the Android Telephony API.
 
-Example payload structure:
+### Example Payload
 
+```json
 {
   "ts_device": "2026-03-16T12:45:10Z",
   "phone_id": "phone_01",
@@ -60,114 +70,131 @@ Example payload structure:
   "band": "B3",
   "source": "android_public_api"
 }
+```
 
-Field description:
+### Field Description
 
-Field	Description
-ts_device	Timestamp generated on the device
-phone_id	Unique identifier for the phone sensor
-seq	Sequential record number
-rat	Radio Access Technology (LTE, NR, GSM, WCDMA)
-rsrp_dbm	Reference Signal Received Power
-rsrq_db	Reference Signal Received Quality
-sinr_db	Signal to Interference plus Noise Ratio
-cell_id	Serving cell identifier
-pci	Physical Cell Identity
-earfcn	LTE channel frequency number
-band	Operating frequency band
-source	Data source identifier
-Sampling Rate
+| Field     | Description                             |
+| --------- | --------------------------------------- |
+| ts_device | Timestamp generated on the device       |
+| phone_id  | Unique identifier for the phone sensor  |
+| seq       | Sequential record number                |
+| rat       | Radio Access Technology                 |
+| rsrp_dbm  | Reference Signal Received Power         |
+| rsrq_db   | Reference Signal Received Quality       |
+| sinr_db   | Signal to Interference plus Noise Ratio |
+| cell_id   | Serving cell identifier                 |
+| pci       | Physical Cell Identity                  |
+| earfcn    | LTE channel frequency number            |
+| band      | Operating frequency band                |
+| source    | Data source identifier                  |
+
+---
+
+## Sampling Rate
 
 The application collects radio measurements at a fixed interval determined by the foreground sensing service.
 
 Typical sampling rate:
-0.5 Hz (one record every two seconds)
 
-This rate can be modified within the service configuration if higher granularity is required.
+* 0.5 Hz (one record every two seconds)
 
-Network Transmission
+This rate can be modified within the service configuration if higher sampling granularity is required.
+
+---
+
+## Network Transmission
 
 Telemetry records are transmitted to a backend server through HTTP requests.
 
-Server endpoint example:
+Example server endpoint:
 
+```
 http://<SERVER_IP>:8000/ingest
+```
 
-The server processes the JSON payload and stores the records for downstream analytics and visualization.
+---
 
-Hardware and Connectivity
+## Hardware and Connectivity
 
-The phone sensor communicates with the backend server through USB tethering or Wi-Fi networking.
+The phone sensor communicates with the backend receiver using either Wi-Fi or USB tethering.
 
-Typical setup:
+Typical deployment setup:
 
-Phone → USB Tethering → Laptop / Raspberry Pi → Backend Receiver
+```
+Phone Sensor → USB Tethering → Laptop or Raspberry Pi → Backend Receiver
+```
 
-USB tethering ensures stable connectivity during mobile drive testing scenarios.
+USB tethering is often preferred during drive testing because it provides stable connectivity between the sensing device and the receiver node.
 
-Application Components
+---
 
-Main components of the Android application:
+## Application Components
 
-MainActivity
-Provides the interface to start and stop the sensing service.
+The Android application consists of several core components:
 
-DriveTestForegroundService
-Runs continuous radio sensing and handles telemetry transmission.
+* MainActivity
+* DriveTestForegroundService
+* AndroidTelephonyRadioSource
+* LocalJsonlWriter
 
-AndroidTelephonyRadioSource
-Extracts cellular information from the Android Telephony API.
+---
 
-LocalJsonlWriter
-Optionally stores telemetry records locally for debugging or offline analysis.
+## Repository Structure
 
-Permissions Required
+```
+DriveTestPhoneSensor/
+├── app/
+│   ├── datasource/
+│   ├── domain/
+│   ├── service/
+│   ├── storage/
+│   └── MainActivity.kt
+```
+
+---
+
+## Permissions Required
 
 The application requires the following Android permissions:
 
-ACCESS_FINE_LOCATION
-READ_PHONE_STATE
-FOREGROUND_SERVICE
-INTERNET
+* ACCESS_FINE_LOCATION
+* READ_PHONE_STATE
+* FOREGROUND_SERVICE
+* INTERNET
 
-Location permission is required because Android restricts access to cellular radio information unless location access is granted.
+Location permission is required because Android restricts access to cellular radio information unless location access has been granted.
 
-Running the Application
+---
 
-Install the application on the Android device.
+## Running the Application
 
-Ensure the device has cellular connectivity.
+1. Install the application on an Android device
+2. Ensure the device has active cellular connectivity
+3. Connect the device to the receiver machine using USB tethering or Wi-Fi
+4. Configure the backend server address in the application
+5. Launch the application
+6. Press Start Drive Test to begin data collection
+7. Press Stop Drive Test to terminate the sensing service
 
-Connect the device to the receiver system using USB tethering or Wi-Fi.
+Once started, the foreground service will continuously collect and transmit telemetry records to the backend server.
 
-Configure the backend server URL in the application.
+---
 
-Launch the application.
+## Use Cases
 
-Press "Start Drive Test" to begin telemetry streaming.
+* Low-cost drive testing
+* Cellular signal strength mapping
+* Mobile network coverage analysis
+* Network performance monitoring
+* Research and academic telecom studies
 
-The service will run continuously until "Stop Drive Test" is selected.
+---
 
-Use Cases
+## Future Improvements
 
-Telecom drive testing
-
-Signal strength mapping
-
-Cellular network performance analysis
-
-Low-cost network telemetry collection
-
-Research on mobile network coverage
-
-Future Improvements
-
-GPS coordinate integration for geospatial analysis
-
-Secure HTTPS telemetry transmission
-
-Offline buffering and retransmission
-
-Dynamic server configuration
-
-Real-time monitoring dashboard integrationcollects cell network data from android phones 
+* GPS integration for geospatial signal analysis
+* Secure HTTPS telemetry transmission
+* Offline buffering when connectivity is unavailable
+* Dynamic server configuration from the user interface
+* Real-time monitoring dashboard for incoming telemetry
