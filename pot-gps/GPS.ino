@@ -6,8 +6,8 @@ TinyGPSPlus gps;
 
 #define gpsSerial Serial2
 
-const char* ssid = "Dialog 4G 219";
-const char* password = "1552A1EF";
+const char* ssid = "Redmi Note 13 Pro+ 5G";
+const char* password = "12345678";
 
 WiFiUDP udp;
 const char* udpAddress = "255.255.255.255"; 
