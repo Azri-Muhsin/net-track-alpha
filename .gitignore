@@ -151,3 +151,5 @@ node_modules/.env
 _pycache_/
 dist/
 
+cell-sig-dash/apps/backend/ai_caches/
+cell-sig-dash/apps/backend/data/
