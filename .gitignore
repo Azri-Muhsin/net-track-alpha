@@ -143,3 +143,12 @@ tmp/
 temp/
 *.tmp
 *.swp
+
+
+.env
+__pycache__/
+dist/
+node_modules/.env
+_pycache_/
+dist/
+
