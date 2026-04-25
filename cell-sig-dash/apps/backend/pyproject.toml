@@ -2,7 +2,6 @@
 name = "backend"
 version = "0.1.0"
 requires-python = ">=3.11"
-package-mode = false
 dependencies = [
   "fastapi",
   "uvicorn[standard]",
@@ -11,6 +10,10 @@ dependencies = [
   "pydantic",
   "python-dotenv"
 ]
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 black = "^24.8.0"
+
+[tool.poetry]
+package-mode = false
