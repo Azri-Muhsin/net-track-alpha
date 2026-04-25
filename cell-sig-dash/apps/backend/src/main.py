@@ -1,32 +1,3 @@
-# from fastapi import FastAPI
-# from fastapi.middleware.cors import CORSMiddleware
-# import os
-# from dotenv import load_dotenv
-
-# load_dotenv()
-
-# app = FastAPI(title="Cellular Signal Track Dashboard API")
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# @app.get("/health")
-# async def health():
-#     return {"status": "ok", "message": "Backend is running 🚀 ToDo - Connected to Cloud DB"}
-
-# @app.get("/base")
-# async def base():
-#     return {"status": "ok", "message": "Backend is running 🚀  This is home base ✅"}
-
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
-
 from contextlib import asynccontextmanager
 from datetime import datetime , timedelta, timezone
 
@@ -85,7 +56,7 @@ async def health():
 @app.post("/api/telemetry")
 async def ingest_telemetry(point: TelemetryPoint):
     doc = point.model_dump()
-    doc["location"] = {"type":"Point", "coordinates":[point.gps.lat]}
+    doc["location"] = {"type":"Point", "coordinates":[point.gps.lon,point.gps.lat]}
     result = await app.state.collection.insert_one(doc)
     return {"status":"ingested", "id": str(result.inserted_id)}
 
@@ -125,17 +96,17 @@ async def get_runs():
 # === DUMMY DATA GENERATOR (for frontend testing - remove from prod) ===
 @app.post("/api/seed")
 async def seed_dummy_data(
-    num_points: int = Query(100, description="Number of 1Hz points to generate"),
+    num_points: int = Query(1000, description="Number of 1Hz points to generate"),
     run_id: str = Query("run_test_001")
 ):
     base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
     points = []
-    lat, lon = 6.9271, 79.8612   # Colombo area
-
+    lat, lon = 6.9154633, 79.9729362   # SLIIT area
+    
     for i in range(num_points):
         ts = base_time + timedelta(seconds=i)
         point = TelemetryPoint(
-            ts_utc=ts,
+            ts_utc= ts,
             meta=Meta(run_id=run_id, vehicle_id="veh_01", phone_id="a53_01", operator="Dialog", rat="LTE"),
             radio=Radio(
                 rsrp_dbm=random.randint(-115, -85),
@@ -159,7 +130,8 @@ async def seed_dummy_data(
             env=Env(
                 light_lux=round(random.uniform(5, 80), 1),
                 temp_c=round(random.uniform(35, 45), 1),
-                shade_flag=random.choice([True, False])
+                shade_flag=random.choice([True, False]),
+                humidity=round(random.uniform(78, 90), 1)
             ),
             ingest=Ingest(pi_id="pi_gateway_01", phone_seq=10000 + i, received_at=ts + timedelta(milliseconds=300))
         )
