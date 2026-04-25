@@ -26,7 +26,7 @@ class Gps(BaseModel):
     heading_deg: float
     fix_quality: int 
     satellites: int 
-    gps_ts: str 
+    gps_ts: datetime 
 
 class Env(BaseModel):
     light_lux: float
@@ -44,6 +44,6 @@ class TelemetryPoint(BaseModel):
     meta: Meta
     radio: Radio 
     gps: Gps
-    enc: Env
+    env: Env
     ingest: Ingest
 
