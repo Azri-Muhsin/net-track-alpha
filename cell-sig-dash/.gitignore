@@ -1,5 +1,4 @@
 .env
 __pycache__/
-_pycache_/
 dist/
 node_modules/
