@@ -1,284 +1,345 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as d3 from "d3";
-import "./index.css";
+import "./App.css";
+import SriLankaChoropleth from "./SriLankaChoropleth";
 
-interface TelemetryPoint {
+interface DashboardPoint {
+  id: string;
   ts_utc: string;
-  radio: { rsrp_dbm: number; rsrq_db: number; sinr_db: number };
-  gps: { lat: number; lon: number };
-  meta: { run_id: string };
+  operator: string;
+  rsrp_dbm: number | null;
+  sinr_db: number | null;
+  lat: number | null;
+  lon: number | null;
 }
 
-function App() {
-  const [points, setPoints] = useState<TelemetryPoint[]>([]);
-  const [runId] = useState("run_test_001");
-  const svgRef = useRef<SVGSVGElement | null>(null);
+interface DistrictStat {
+  districtName: string;
+  province: string;
+  totalSamples: number;
+  weakPercent: number;
+  avgRsrp: number | null;
+}
 
-  const fetchData = async () => {
+const GEOJSON_PATH = "/sri_lanka_districts.geojson";
+const API_BASE_URL = "http://localhost:8000";
+const RUN_ID = "run_test_001";
+
+function getDistrictName(feature: any) {
+  const raw =
+    feature.properties.shapeName ||
+    feature.properties.NAME_2 ||
+    feature.properties.district ||
+    feature.properties.name ||
+    "Unknown";
+
+  return raw.replace(" District", "").trim();
+}
+
+function getProvinceName(feature: any) {
+  return (
+    feature.properties.shapeGroup ||
+    feature.properties.province ||
+    feature.properties.NAME_1 ||
+    "Sri Lanka"
+  );
+}
+
+export default function App() {
+  const [points, setPoints] = useState<DashboardPoint[]>([]);
+  const [districtGeo, setDistrictGeo] = useState<any>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState(-110);
+
+  const fetchDashboardData = async () => {
     try {
+      setApiError(null);
+
       const res = await fetch(
-        `http://localhost:8000/api/telemetry?run_id=${runId}&limit=200`
+        `${API_BASE_URL}/api/dashboard/summary?run_id=${RUN_ID}`
       );
+
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+
       const data = await res.json();
-      setPoints(data);
-    } catch (err) {
-      console.error("Failed to fetch data:", err);
+      setPoints(data.points ?? []);
+    } catch (err: any) {
+      setApiError(err.message);
     }
   };
 
-  const seedData = async () => {
-    await fetch(
-      `http://localhost:8000/api/seed?num_points=100&run_id=${runId}`,
-      { method: "POST" }
-    );
-    fetchData();
+  const loadGeoJson = async () => {
+    try {
+      setGeoError(null);
+
+      const res = await fetch(GEOJSON_PATH);
+      if (!res.ok) throw new Error("sri_lanka_districts.geojson not found");
+
+      const data = await res.json();
+      setDistrictGeo(data);
+    } catch (err: any) {
+      setGeoError(err.message);
+    }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchDashboardData();
+    loadGeoJson();
   }, []);
 
-  const stats = useMemo(() => {
-    if (!points.length) {
+  const validPoints = useMemo(() => {
+    return points.filter(
+      (p) =>
+        p.lat !== null &&
+        p.lon !== null &&
+        p.rsrp_dbm !== null &&
+        !Number.isNaN(p.lat) &&
+        !Number.isNaN(p.lon)
+    );
+  }, [points]);
+
+  const avgRsrp = useMemo(() => {
+    if (!validPoints.length) return null;
+    return Math.round(
+      validPoints.reduce((sum, p) => sum + (p.rsrp_dbm ?? 0), 0) /
+        validPoints.length
+    );
+  }, [validPoints]);
+
+  const weakCoverage = useMemo(() => {
+    if (!validPoints.length) return 0;
+    const weak = validPoints.filter((p) => (p.rsrp_dbm ?? 0) <= threshold);
+    return Math.round((weak.length / validPoints.length) * 100);
+  }, [validPoints, threshold]);
+
+  const districtStats: DistrictStat[] = useMemo(() => {
+    if (!districtGeo || !validPoints.length) return [];
+
+    return districtGeo.features.map((feature: any) => {
+      const name = getDistrictName(feature);
+      const province = getProvinceName(feature);
+
+      const dPoints = validPoints.filter((p) =>
+        d3.geoContains(feature, [p.lon as number, p.lat as number])
+      );
+
+      const weak = dPoints.filter((p) => (p.rsrp_dbm ?? 0) <= threshold);
+
+      const avg =
+        dPoints.length > 0
+          ? Math.round(
+              dPoints.reduce((sum, p) => sum + (p.rsrp_dbm ?? 0), 0) /
+                dPoints.length
+            )
+          : null;
+
       return {
-        avgRsrp: -106,
-        weakCoverage: 37,
-        samples: 52841,
+        districtName: name,
+        province,
+        totalSamples: dPoints.length,
+        weakPercent: dPoints.length
+          ? Math.round((weak.length / dPoints.length) * 100)
+          : 0,
+        avgRsrp: avg,
       };
-    }
+    });
+  }, [districtGeo, validPoints, threshold]);
 
-    const avg =
-      points.reduce((sum, p) => sum + p.radio.rsrp_dbm, 0) / points.length;
+  const activeDistricts = districtStats.filter((d) => d.totalSamples > 0);
 
-    const weak =
-      (points.filter((p) => p.radio.rsrp_dbm < -110).length / points.length) *
-      100;
+  const worstDistricts = [...activeDistricts]
+    .sort((a, b) => b.weakPercent - a.weakPercent)
+    .slice(0, 8);
 
-    return {
-      avgRsrp: Math.round(avg),
-      weakCoverage: Math.round(weak),
-      samples: points.length,
-    };
-  }, [points]);
+  const criticalDistricts = activeDistricts.filter(
+    (d) => d.weakPercent > 45
+  ).length;
 
-  useEffect(() => {
-    if (!svgRef.current || points.length === 0) return;
+  const goodDistricts = activeDistricts.filter(
+    (d) => d.weakPercent <= 10
+  ).length;
 
-    const containerWidth = svgRef.current.parentElement?.clientWidth || 900;
-    const width = containerWidth;
-    const height = 350;
-    const margin = { top: 30, right: 30, bottom: 45, left: 55 };
+  const provinceSummary = useMemo(() => {
+    const groups: Record<string, DistrictStat[]> = {};
 
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+    activeDistricts.forEach((d) => {
+      if (!groups[d.province]) groups[d.province] = [];
+      groups[d.province].push(d);
+    });
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+    return Object.entries(groups).map(([province, districts]) => {
+      const avgWeak = Math.round(
+        districts.reduce((sum, d) => sum + d.weakPercent, 0) / districts.length
+      );
 
-    svg.attr("viewBox", `0 0 ${width} ${height}`);
-
-    const data = points.map((p) => ({
-      date: new Date(p.ts_utc),
-      rsrp: p.radio.rsrp_dbm,
-      sinr: p.radio.sinr_db,
-    }));
-
-    const xScale = d3
-      .scaleTime()
-      .domain(d3.extent(data, (d) => d.date) as [Date, Date])
-      .range([0, innerWidth]);
-
-    const yScale = d3
-      .scaleLinear()
-      .domain([
-        d3.min(data, (d) => Math.min(d.rsrp, d.sinr))! - 5,
-        d3.max(data, (d) => Math.max(d.rsrp, d.sinr))! + 5,
-      ])
-      .nice()
-      .range([innerHeight, 0]);
-
-    const g = svg
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    g.append("g")
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(d3.axisBottom(xScale).ticks(5).tickFormat(d3.timeFormat("%H:%M") as any));
-
-    g.append("g").call(d3.axisLeft(yScale));
-
-    g.selectAll(".domain, .tick line").attr("stroke", "#3a3f46");
-    g.selectAll(".tick text").attr("fill", "#aeb6c2");
-
-    const lineRsrp = d3
-      .line<(typeof data)[0]>()
-      .x((d) => xScale(d.date))
-      .y((d) => yScale(d.rsrp))
-      .curve(d3.curveMonotoneX);
-
-    const lineSinr = d3
-      .line<(typeof data)[0]>()
-      .x((d) => xScale(d.date))
-      .y((d) => yScale(d.sinr))
-      .curve(d3.curveMonotoneX);
-
-    g.append("path")
-      .datum(data)
-      .attr("fill", "none")
-      .attr("stroke", "#0ea5e9")
-      .attr("stroke-width", 2.5)
-      .attr("d", lineRsrp);
-
-    g.append("path")
-      .datum(data)
-      .attr("fill", "none")
-      .attr("stroke", "#22c55e")
-      .attr("stroke-width", 2.5)
-      .attr("d", lineSinr);
-  }, [points]);
+      return {
+        province,
+        weakPercent: avgWeak,
+        districts: districts.length,
+      };
+    });
+  }, [activeDistricts]);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-icon">◉</div>
-          <div>
-            <h1>NETRACK</h1>
-            <p>IOT ANALYTICS</p>
-          </div>
-        </div>
-
-        <nav>
-          <a className="active">Overview</a>
-          <a>Route Analysis</a>
-          <a>MNO Benchmark</a>
-          <a>Rig Health</a>
-          <a>Data Table</a>
-        </nav>
-
-        <div className="live-card">
-          <strong>● Live Collection</strong>
-          <p>Rig ID: NTRK-04</p>
-          <p>Route: CMB–KDY</p>
-          <p>Samples: {stats.samples.toLocaleString()}</p>
-        </div>
-      </aside>
-
-      <main className="main">
-        <header className="topbar">
+    <div className="dashboard-page">
+      <main className="dashboard-main">
+        <header className="dashboard-header">
           <div>
             <p className="eyebrow">NETWORK DRIVE TESTING DASHBOARD</p>
+            <h1>NETRACK IoT Analytics</h1>
           </div>
-          <button className="date-btn">Last 7 Days</button>
+
+          <button className="refresh-btn" onClick={fetchDashboardData}>
+            Refresh
+          </button>
         </header>
 
-        <section className="filters">
+        <section className="filter-bar">
           <span>DISTRICT</span>
-          <button>All Districts</button>
+          <select>
+            <option>All Districts</option>
+          </select>
+
           <span>MNO</span>
-          <button className="dialog">Dialog</button>
-          <button className="mobitel">Mobitel</button>
-          <button className="airtel">Airtel</button>
-          <button className="hutch">Hutch</button>
+          <button className="mno dialog">Dialog</button>
+          <button className="mno mobitel">Mobitel</button>
+          <button className="mno airtel">Airtel</button>
+          <button className="mno hutch">Hutch</button>
+
           <span>THRESHOLD</span>
-          <input type="range" defaultValue={70} />
-          <strong>-110 dBm</strong>
+          <input
+            type="range"
+            min="-125"
+            max="-80"
+            value={threshold}
+            onChange={(e) => setThreshold(Number(e.target.value))}
+          />
+          <strong>{threshold} dBm</strong>
         </section>
+
+        {apiError && <div className="error-card">API Error: {apiError}</div>}
+        {geoError && <div className="error-card">Map Error: {geoError}</div>}
 
         <section className="kpi-grid">
-          <div className="card">
-            <p>Total Districts</p>
-            <h2>25</h2>
-            <span className="good">▲ 0 vs last week</span>
+          <div className="kpi-card">
+            <p>TOTAL DISTRICTS</p>
+            <h2>{districtGeo?.features?.length ?? 0}</h2>
+            <small>Sri Lanka coverage</small>
           </div>
 
-          <div className="card">
-            <p>Avg RSRP</p>
-            <h2 className="yellow">{stats.avgRsrp} dBm</h2>
-            <span className="orange">▼ 2.3 dBm vs last week</span>
+          <div className="kpi-card">
+            <p>AVG RSRP</p>
+            <h2 className="yellow">{avgRsrp ?? "N/A"} dBm</h2>
+            <small>National average</small>
           </div>
 
-          <div className="card">
-            <p>% Weak Coverage</p>
-            <h2 className="orange">{stats.weakCoverage}%</h2>
-            <span className="orange">&lt; -110 dBm threshold</span>
+          <div className="kpi-card">
+            <p>% WEAK COVERAGE</p>
+            <h2 className="orange">{weakCoverage}%</h2>
+            <small>&lt; {threshold} dBm threshold</small>
           </div>
 
-          <div className="card">
-            <p>Districts Below Threshold</p>
-            <h2 className="red">10</h2>
-            <span className="orange">▼ 2 vs last week</span>
-          </div>
-        </section>
-
-        <section className="viz-row">
-          <div className="card map-card">
-            <div className="section-head">
-              <div>
-                <h2>District Coverage Choropleth</h2>
-                <p>RSRP weakness by district — click to drill down</p>
-              </div>
-              <button onClick={seedData}>Sync Data</button>
-            </div>
-
-            <div className="mock-map">
-              {Array.from({ length: 24 }).map((_, i) => (
-                <span key={i} className={`dot d${i}`} />
-              ))}
-            </div>
-          </div>
-
-          <div className="card ranking-card">
-            <h2>Worst Districts Ranking</h2>
-
-            {[
-              ["Mullaitivu", "71%", "-121 dBm"],
-              ["Kilinochchi", "67%", "-119 dBm"],
-              ["Monaragala", "63%", "-118 dBm"],
-              ["Mannar", "58%", "-115 dBm"],
-              ["Ampara", "55%", "-114 dBm"],
-              ["Hambantota", "52%", "-113 dBm"],
-              ["Vavuniya", "48%", "-110 dBm"],
-              ["Nuwara Eliya", "46%", "-108 dBm"],
-            ].map(([name, weak, rsrp], index) => (
-              <div className="rank-row" key={name}>
-                <span>{index + 1}</span>
-                <strong>{name}</strong>
-                <em>{weak}</em>
-                <small>{rsrp}</small>
-              </div>
-            ))}
+          <div className="kpi-card">
+            <p>DISTRICTS BELOW THRESHOLD</p>
+            <h2 className="red">{criticalDistricts}</h2>
+            <small>Require intervention</small>
           </div>
         </section>
 
-        <section className="card chart-card">
-          <div className="section-head">
+        <section className="map-card">
+          <div className="section-title">
             <div>
-              <h2>Network Signal Trend</h2>
-              <p>Live RSRP and SINR readings from the active run</p>
+              <h2>District Coverage Choropleth</h2>
+              <p>RSRP weakness by district — click or hover to inspect</p>
+            </div>
+
+            <div className="legend">
+              <span><i className="dot excellent"></i>Excellent</span>
+              <span><i className="dot good"></i>Good</span>
+              <span><i className="dot fair"></i>Fair</span>
+              <span><i className="dot poor"></i>Poor</span>
             </div>
           </div>
-          <svg ref={svgRef}></svg>
+
+          <div className="map-layout">
+            <div className="sl-map-wrapper">
+              {districtGeo ? (
+                <SriLankaChoropleth
+                  geoJson={districtGeo}
+                  districtStats={districtStats}
+                />
+              ) : (
+                <p>Loading map...</p>
+              )}
+            </div>
+
+            <aside className="map-side">
+              <h3>WEAK % SCALE</h3>
+              <p><i className="dot excellent"></i>&lt; 10%</p>
+              <p><i className="dot good"></i>10–25%</p>
+              <p><i className="dot fair"></i>25–45%</p>
+              <p><i className="dot poor"></i>&gt; 45%</p>
+
+              <h3>QUICK JUMP</h3>
+              {worstDistricts.slice(0, 5).map((d) => (
+                <div className="quick-row" key={d.districtName}>
+                  <span>{d.districtName}</span>
+                  <strong>{d.weakPercent}%</strong>
+                </div>
+              ))}
+            </aside>
+          </div>
         </section>
 
-        <section className="card province-card">
+        <section className="ranking-card">
+          <div className="section-title">
+            <h2>Worst Districts Ranking</h2>
+            <p>By % weak RSRP</p>
+          </div>
+
+          <div className="rank-header">
+            <span>#</span>
+            <span>District</span>
+            <span>% Weak</span>
+            <span>Median RSRP</span>
+          </div>
+
+          {worstDistricts.map((d, index) => (
+            <div className="rank-row" key={d.districtName}>
+              <span>{index + 1}</span>
+              <strong>
+                <i className="dot poor"></i>
+                {d.districtName}
+                <small>{d.province}</small>
+              </strong>
+              <em>{d.weakPercent}%</em>
+              <span>{d.avgRsrp ?? "N/A"} dBm</span>
+            </div>
+          ))}
+
+          <div className="summary-strip">
+            <div>
+              <strong className="green">{goodDistricts}</strong>
+              <span>Good Coverage</span>
+            </div>
+            <div>
+              <strong className="red-text">{criticalDistricts}</strong>
+              <span>Critical Districts</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="province-card">
           <h2>Province-Level Summary</h2>
+
           <div className="province-grid">
-            {[
-              ["Western", "15%"],
-              ["Central", "33%"],
-              ["Southern", "36%"],
-              ["Sabaragamuwa", "33%"],
-              ["Uva", "54%"],
-              ["Eastern", "44%"],
-              ["North Central", "32%"],
-              ["Northern", "52%"],
-              ["North Western", "27%"],
-            ].map(([name, value]) => (
-              <div className="province" key={name}>
-                <strong>{name}</strong>
-                <h3>{value}</h3>
-                <p>weak</p>
+            {provinceSummary.map((p) => (
+              <div className="province-box" key={p.province}>
+                <span>{p.province}</span>
+                <strong>{p.weakPercent}%</strong>
+                <small>weak</small>
+                <small>{p.districts} dist.</small>
               </div>
             ))}
           </div>
@@ -287,5 +348,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
