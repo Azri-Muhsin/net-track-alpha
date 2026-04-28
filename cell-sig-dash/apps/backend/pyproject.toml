@@ -1,23 +1,19 @@
 [tool.poetry]
 name = "backend"
 version = "0.1.0"
-description = ""
-authors = []
-package-mode = false
-
-[tool.poetry.dependencies]
-python = "^3.11"
-fastapi = "*"
-uvicorn = { extras = ["standard"], version = "*" }
-motor = "*"
-redis = "*"
-pydantic = "*"
-python-dotenv = "*"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "motor",
+  "redis",
+  "pydantic",
+  "python-dotenv"
+]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 black = "^24.8.0"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.poetry]
+package-mode = false
