@@ -42,7 +42,7 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
-pytest_cache/
+.pytest_cache/
 
 # Type checkers
 .mypy_cache/
@@ -143,6 +143,9 @@ temp/
 *.tmp
 *.swp
 
+# Backend generated data and cache
+cell-sig-dash/apps/backend/ai_caches/
+cell-sig-dash/apps/backend/data/
 
 .env
 __pycache__/
