@@ -52,14 +52,6 @@ app.add_middleware(
     allow_credentials = True,
     allow_methods = ["*"],
     allow_headers = ["*"],
-
-app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 # DB ping - health check endpoint
@@ -67,10 +59,6 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 PHONE_DATA_FILE = DATA_DIR / "phone_radio_data.jsonl"
-
-@app.get("/")
-async def root():
-    return {"message": "API is running"}
 
 @app.get("/")
 async def root():
