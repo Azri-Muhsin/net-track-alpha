@@ -1,5 +1,6 @@
 import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
+import logo from "../assets/NetTrack_png.png";
 
 export default function Sidebar() {
   const { theme, setTheme, colors } = useTheme();
@@ -89,7 +90,11 @@ export default function Sidebar() {
                   fontSize: 18,
                 }}
               >
-                🚀
+                <img
+                  src={logo}
+                  alt="logo"
+                  style={{ width: 50, height: 50, objectFit: "contain" }}
+                />
               </div>
               <h3
                 style={{

@@ -13,7 +13,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           overflow: "auto",
         }}
       >
-        {/* Top Bar - Instagram style */}
+        {/* Top Bar*/}
         <div
           style={{
             position: "sticky",
