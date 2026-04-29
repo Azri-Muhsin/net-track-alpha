@@ -1,54 +1,65 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import json
+import os
 import random
-from fastapi import FastAPI, Query
+from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis.asyncio import Redis
 from openai import AsyncOpenAI
-from pydantic import BaseModel
-from dotenv import load_dotenv
-from src.schemas.telemetry import TelemetryPoint, Meta, Radio, Gps, Env, Ingest
+
+from src.schemas.telemetry import (
+    TelemetryPoint,
+    Meta,
+    Radio,
+    Gps,
+    Env,
+    Ingest,
+)
 
 load_dotenv()
 
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+PHONE_DATA_FILE = DATA_DIR / "phone_radio_data.jsonl"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # MongoDB
-    mongodb_uri = os.getenv("MONGODB_URI")
-    app.state.mongodb_client = AsyncIOMotorClient(mongodb_uri)
-    app.state.db = app.state.mongodb_client["cellular_signal_db"]
+    uri = os.getenv("MONGODB_URI")
+    if not uri:
+        raise ValueError(
+            "Missing MONGODB_URI. Create a .env in apps/backend with MONGODB_URI=<your connection string>."
+        )
+
+    app.state.client = AsyncIOMotorClient(uri)
+    app.state.db = app.state.client["cellular_signal_db"]
     app.state.collection = app.state.db["telemetry_points"]
+
     await app.state.collection.create_index("meta.run_id")
+    await app.state.collection.create_index("meta.operator")
+    await app.state.collection.create_index("ts_utc")
+    await app.state.collection.create_index([("meta.run_id", 1), ("ts_utc", 1)])
     await app.state.collection.create_index([("location", "2dsphere")])
-    print("✅ MongoDB connected + indexes ready")
 
-    # Redis (Upstash)
-    redis_url = os.getenv("REDIS_URI")
-    app.state.redis = Redis.from_url(redis_url, decode_responses=True)
-    print("✅ Upstash Redis connected (Pub/Sub ready for live updates)")
-
-    # from upstash_redis import Redis
- 
-    # redis = Redis.from_env()
-
-    # LLM Client 
-    llm_base = os.getenv("LLM_BASE_URL")
-    app.state.llm_client = AsyncOpenAI(
-        api_key=os.getenv("LLM_API_KEY"),
-        base_url=llm_base if llm_base else None,
-    )
-    app.state.llm_model = os.getenv("LLM_MODEL", "gpt-5-nano")
-    print(f"✅ LLM ready → {app.state.llm_model}")
+    parsed = urlparse(uri)
+    host = parsed.hostname or "unknown-host"
+    print(f"Connected to MongoDB ({parsed.scheme}://{host}) + indexes created")
 
     yield
-    app.state.mongodb_client.close()
-    await app.state.redis.aclose()
 
-app = FastAPI(title="Cellular Signal Dashboard API", lifespan=lifespan)
+    app.state.client.close()
+    print("MongoDB connection closed")
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,210 +69,365 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/")
+async def root():
+    return {"message": "API is running"}
+
+
 @app.get("/health")
 async def health():
     try:
         await app.state.db.command("ping")
-        await app.state.redis.ping()
-        return {"status": "ok", "mongo": "connected", "redis": "connected", "message": "🚀 Real-time + AI ready"}
+        uri = os.getenv("MONGODB_URI", "")
+        parsed = urlparse(uri) if uri else None
+        return {
+            "status": "ok",
+            "mongo": "connected",
+            "message": "Backend is running - DB running - all good",
+            "mongo_host": (parsed.hostname if parsed else None),
+            "mongo_db": "cellular_signal_db",
+        }
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        return {"status": "error", "mongo": str(e)}
 
-# === INGEST + PUBLISH TO REDIS (real-time) ===
+
 @app.post("/api/telemetry")
 async def ingest_telemetry(point: TelemetryPoint):
     doc = point.model_dump()
-    doc["location"] = {"type": "Point", "coordinates": [point.gps.lon, point.gps.lat]}
-    
-    await app.state.collection.insert_one(doc)
-    
-    # Publish to Redis Pub/Sub for live frontend
-    publish_doc = point.model_dump(mode="json")
-    publish_doc["location"] = doc["location"]
-    await app.state.redis.publish(
-        f"telemetry:{point.meta.run_id}",
-        json.dumps(publish_doc)
-    )
-    
-    return {"status": "ingested", "id": str(doc.get("_id"))}
+
+    doc["location"] = {
+        "type": "Point",
+        "coordinates": [point.gps.lon, point.gps.lat],
+    }
+
+    result = await app.state.collection.insert_one(doc)
+
+    return {
+        "status": "ingested",
+        "id": str(result.inserted_id),
+    }
 
 # === GET HISTORICAL DATA ===
 @app.get("/api/telemetry")
 async def get_telemetry(
-    run_id: str = Query(None),
-    limit: int = Query(500, le=2000),
-    skip: int = 0
+    run_id: str | None = Query(None, description="Filter by ride/run_id"),
+    operator: str | None = Query(None, description="Filter by operator/MNO"),
+    start_ts: datetime | None = Query(None, description="Start timestamp (ISO8601)"),
+    end_ts: datetime | None = Query(None, description="End timestamp (ISO8601)"),
+    limit: int = Query(500, le=1000),
+    skip: int = 0,
 ):
-    query = {"meta.run_id": run_id} if run_id else {}
-    cursor = app.state.collection.find(query).sort("ts_utc", 1).skip(skip).limit(limit)
+    query: dict = {}
+    if run_id:
+        query["meta.run_id"] = run_id
+    if operator:
+        query["meta.operator"] = operator
+    if start_ts or end_ts:
+        time_q: dict = {}
+        if start_ts:
+            time_q["$gte"] = start_ts
+        if end_ts:
+            time_q["$lte"] = end_ts
+        query["ts_utc"] = time_q
+
+    cursor = (
+        app.state.collection
+        .find(query)
+        .sort("ts_utc", 1)
+        .skip(skip)
+        .limit(limit)
+    )
+
     points = await cursor.to_list(length=limit)
+
     for p in points:
         p["_id"] = str(p["_id"])
         p.pop("location", None)
+
     return points
 
-# === LIVE STREAM (SSE + Redis Pub/Sub) ===
-@app.get("/api/telemetry/live/{run_id}")
-async def live_telemetry(run_id: str):
-    async def event_generator():
-        pubsub = app.state.redis.pubsub()
-        await pubsub.subscribe(f"telemetry:{run_id}")
-        try:
-            async for message in pubsub.listen():
-                if message.get("type") == "message":
-                    yield f"data: {message['data']}\n\n"
-        finally:
-            await pubsub.unsubscribe(f"telemetry:{run_id}")
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-# === LIST RUNS ===
+@app.get("/api/dashboard/summary")
+async def get_summary(
+    run_id: str | None = Query(None, description="Filter by ride/run_id"),
+    operator: str | None = Query(None, description="Filter by operator/MNO"),
+    district: str | None = Query(None, description="Filter by district name"),
+    start_ts: datetime | None = Query(None, description="Start timestamp (ISO8601)"),
+    end_ts: datetime | None = Query(None, description="End timestamp (ISO8601)"),
+    threshold: int = Query(-110, description="Weak RSRP threshold (dBm)"),
+    limit: int = Query(5000, le=20000),
+):
+    query: dict = {}
+    if run_id:
+        query["meta.run_id"] = run_id
+    if operator:
+        # Schema stores measurements under operators.<OperatorName>.*
+        query[f"operators.{operator}.rsrp_dbm"] = {"$exists": True}
+    if district:
+        query["district"] = district
+    if start_ts or end_ts:
+        time_q: dict = {}
+        if start_ts:
+            time_q["$gte"] = start_ts
+        if end_ts:
+            time_q["$lte"] = end_ts
+        query["ts_utc"] = time_q
+
+    projection = {
+        "ts_utc": 1,
+        "meta.operator": 1,
+        "operators": 1,
+        "district": 1,
+        "province": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+    }
+
+    cursor = (
+        app.state.collection
+        .find(query, projection)
+        .sort("ts_utc", 1)
+        .hint([("ts_utc", 1)])
+    )
+    docs = await cursor.to_list(length=limit)
+
+    points = []
+    rsrp_vals = []
+    weak_count = 0
+    critical_count = 0
+
+    def pick_operator_radio(doc: dict, requested: str | None) -> tuple[str, dict]:
+        ops = doc.get("operators") or {}
+        if isinstance(ops, dict):
+            if requested and requested in ops and isinstance(ops[requested], dict):
+                return requested, ops[requested]
+            # prefer Dialog if present, else first available operator
+            if "Dialog" in ops and isinstance(ops["Dialog"], dict):
+                return "Dialog", ops["Dialog"]
+            for k, v in ops.items():
+                if isinstance(v, dict):
+                    return str(k), v
+        return (requested or doc.get("meta", {}).get("operator") or "Unknown"), {}
+
+    for d in docs:
+        gps = d.get("gps", {})
+        meta = d.get("meta", {})
+        op_name, radio = pick_operator_radio(d, operator)
+
+        rsrp = radio.get("rsrp_dbm")
+        sinr = radio.get("sinr_db")
+        lat = gps.get("lat")
+        lon = gps.get("lon")
+
+        if rsrp is not None:
+            rsrp_vals.append(rsrp)
+
+            if rsrp <= threshold:
+                weak_count += 1
+
+            if rsrp <= (threshold - 10):
+                critical_count += 1
+
+        points.append({
+            "id": str(d.get("_id")),
+            "ts_utc": d.get("ts_utc").isoformat() if d.get("ts_utc") else None,
+            "operator": op_name or meta.get("operator", "Unknown"),
+            "rsrp_dbm": rsrp,
+            "sinr_db": sinr,
+            "lat": lat,
+            "lon": lon,
+        })
+
+    total = len(docs)
+
+    return {
+        "run_id": run_id,
+        "operator": operator,
+        "threshold": threshold,
+        "total_samples": total,
+        "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1) if rsrp_vals else None,
+        "weak_coverage_percent": round((weak_count / total) * 100, 1) if total else 0,
+        "critical_count": critical_count,
+        "points": points,
+    }
+
+
 @app.get("/api/runs")
 async def get_runs():
     pipeline = [
-        {"$group": {
-            "_id": "$meta.run_id",
-            "vehicle_id": {"$first": "$meta.vehicle_id"},
-            "start_time": {"$min": "$ts_utc"},
-            "end_time": {"$max": "$ts_utc"},
-            "point_count": {"$sum": 1}
-        }},
-        {"$sort": {"start_time": -1}}
+        {
+            "$group": {
+                "_id": "$meta.run_id",
+                "vehicle_id": {"$first": "$meta.vehicle_id"},
+                "operator": {"$first": "$meta.operator"},
+                "start_time": {"$min": "$ts_utc"},
+                "end_time": {"$max": "$ts_utc"},
+                "point_count": {"$sum": 1},
+            }
+        },
+        {"$sort": {"start_time": -1}},
     ]
-    return await app.state.collection.aggregate(pipeline).to_list(None)
 
-# === LLM ANALYTICS AGENT ===
-@app.get("/api/analyze/{run_id}")
-async def analyze_run(run_id: str):
-    points = await app.state.collection.find({"meta.run_id": run_id}).sort("ts_utc", 1).limit(150).to_list(None)
-    if not points:
-        return {"insight": "No data found for this run."}
-    
-    rsrp_vals = [p["radio"]["rsrp_dbm"] for p in points]
-    sinr_vals = [p["radio"]["sinr_db"] for p in points]
-    
-    summary = {
-        "run_id": run_id,
-        "points_analyzed": len(points),
-        "duration_minutes": round((points[-1]["ts_utc"] - points[0]["ts_utc"]).total_seconds() / 60, 1),
-        "avg_rsrp": round(sum(rsrp_vals)/len(rsrp_vals), 1),
-        "min_rsrp": min(rsrp_vals),
-        "poor_signal_percent": round(len([x for x in rsrp_vals if x < -100]) / len(rsrp_vals) * 100, 1),
-        "avg_sinr": round(sum(sinr_vals)/len(sinr_vals), 1),
-        "last_10_points": [p["radio"] for p in points[-10:]]
-    }
-    
-    prompt = f"""You are an expert cellular network engineer, geospatial analysts and regional telecom development and cellular service upgrade and improvement expert. Analyze this vehicle ride telemetry (1 Hz data).
+    cursor = app.state.collection.aggregate(pipeline)
+    runs = await cursor.to_list(length=None)
 
-{json.dumps(summary, default=str)}
+    for run in runs:
+        run["run_id"] = run.pop("_id")
 
-Give a short, actionable insight (3-5 bullet points) about:
-• Overall signal quality
-• Any blackspots or drops
-• Recommendations for operator / route"""
+    return runs
 
-    completion = await app.state.llm_client.chat.completions.create(
-        model=app.state.llm_model,
-        messages=[{"role": "system", "content": "You are a helpful cellular signal expert."},
-                  {"role": "user", "content": prompt}],
-        # temperature=0.7, # temp not supported for gpt-5-nano
-        max_completion_tokens=400
-    )
-    
-    return {"insight": completion.choices[0].message.content.strip()}
 
-# === DUMMY DATA (now also publishes live) ===
 @app.post("/api/seed")
 async def seed_dummy_data(
-    num_points: int = Query(1000),
-    run_id: str = Query("run_test_002")
+    num_points: int = Query(1000, description="Number of points to generate"),
+    run_id: str = Query("run_test_001"),
 ):
-    base_time = datetime.utcnow() - timedelta(minutes=10)
-    lat, lon = 6.9271, 79.8612
+    operators = ["Dialog", "Mobitel", "Hutch"]
+    base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    start_lat, start_lon = 6.9271, 79.8612
     points = []
 
     for i in range(num_points):
         ts = base_time + timedelta(seconds=i)
+        lat = start_lat + random.uniform(-0.15, 0.15)
+        lon = start_lon + random.uniform(-0.10, 0.10)
+
+        operator = random.choice(operators)
+
         point = TelemetryPoint(
             ts_utc=ts,
-            meta=Meta(run_id=run_id, vehicle_id="veh_01", phone_id="a53_01", operator="Dialog", rat="LTE"),
-            radio=Radio(rsrp_dbm=random.randint(-115, -85), rsrq_db=random.randint(-18, -8), sinr_db=random.randint(0, 18),
-                        cell_id="41322109", pci=112, earfcn=1650, band="B3"),
-            gps=Gps(lat=round(lat + random.uniform(-0.008, 0.008), 6),
-                    lon=round(lon + random.uniform(-0.008, 0.008), 6),
-                    alt_m=round(17.4 + random.uniform(-10, 10), 1),
-                    speed_mps=round(11.2 + random.uniform(-5, 5), 1),
-                    heading_deg=182.5, fix_quality=1, satellites=14, gps_ts=ts),
-            env=Env(light_lux=round(random.uniform(5, 80), 1),
-                    temp_c=round(random.uniform(35, 45), 1),
-                    shade_flag=random.choice([True, False]),
-	    humidity = round(random.uniform(78,90),1)),
-            ingest=Ingest(pi_id="pi_gateway_01", phone_seq=10000 + i,
-                          received_at=ts + timedelta(milliseconds=300))
+            meta=Meta(
+                run_id=run_id,
+                vehicle_id="veh_01",
+                phone_id="a53_01",
+                operator=operator,
+                rat="LTE",
+            ),
+            radio=Radio(
+                rsrp_dbm=random.randint(-120, -70),
+                rsrq_db=random.randint(-18, -8),
+                sinr_db=random.randint(-5, 20),
+                cell_id="41322109",
+                pci=112,
+                earfcn=1650,
+                band="B3",
+            ),
+            gps=Gps(
+                lat=round(lat, 6),
+                lon=round(lon, 6),
+                alt_m=round(17.4 + random.uniform(-10, 10), 1),
+                speed_mps=round(11.2 + random.uniform(-5, 5), 1),
+                heading_deg=182.5,
+                fix_quality=1,
+                satellites=14,
+                gps_ts=ts,
+            ),
+            env=Env(
+                light_lux=round(random.uniform(5, 80), 1),
+                temp_c=round(random.uniform(35, 45), 1),
+                shade_flag=random.choice([True, False]),
+                humidity=round(random.uniform(78, 90), 1),
+            ),
+            ingest=Ingest(
+                pi_id="pi_gateway_01",
+                phone_seq=10000 + i,
+                received_at=ts + timedelta(milliseconds=300),
+            ),
         )
+
         doc = point.model_dump()
-        doc["location"] = {"type": "Point", "coordinates": [point.gps.lon, point.gps.lat]}
-        await app.state.collection.insert_one(doc)
-        
-        # Also publish live
-        publish_doc = point.model_dump(mode="json")
-        publish_doc["location"] = doc["location"]
-        await app.state.redis.publish(f"telemetry:{run_id}", json.dumps(publish_doc))
-        
+        doc["location"] = {
+            "type": "Point",
+            "coordinates": [point.gps.lon, point.gps.lat],
+        }
+
         points.append(doc)
 
-    return {"status": "seeded", "run_id": run_id, "points": num_points, "live": "published"}
+    result = await app.state.collection.insert_many(points)
+
+    return {
+        "status": "seeded",
+        "run_id": run_id,
+        "inserted_count": len(result.inserted_ids),
+    }
+
+
+@app.delete("/api/seed")
+async def clear_seed_data(run_id: str = Query("run_test_001")):
+    result = await app.state.collection.delete_many({
+        "meta.run_id": run_id,
+    })
+
+    return {
+        "status": "cleared",
+        "run_id": run_id,
+        "deleted_count": result.deleted_count,
+    }
+
+
+@app.get("/data")
+async def get_recent_data(limit: int = 50):
+    if not PHONE_DATA_FILE.exists():
+        return []
+
+    lines = PHONE_DATA_FILE.read_text(encoding="utf-8").splitlines()
+    recent = lines[-limit:]
+
+    records = []
+
+    for line in recent:
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    return records
+
+
+@app.websocket("/ws/phone-radio")
+async def websocket_phone_radio(websocket: WebSocket):
+    await websocket.accept()
+
+    print("Phone connected via WebSocket")
+    print("Saving data to:", PHONE_DATA_FILE.resolve())
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            payload = json.loads(data)
+
+            with PHONE_DATA_FILE.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+            print("Received from phone:")
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            print("Saved to file")
+
+            await websocket.send_text(json.dumps({
+                "status": "received",
+                "seq": payload.get("seq"),
+                "message": "Data received successfully",
+            }))
+
+    except WebSocketDisconnect:
+        print("Phone disconnected")
+
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
 
-
-# === DUMMY DATA GENERATOR (for frontend testing - remove from prod) ===
-#
-# @app.post("/api/seed")
-# async def seed_dummy_data(
-#     num_points: int = Query(1000, description="Number of 1Hz points to generate"),
-#     run_id: str = Query("run_test_001")
-# ):
-#     base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
-#     points = []
-#     lat, lon = 6.9154633, 79.9729362   # SLIIT area
-    
-#     for i in range(num_points):
-#         ts = base_time + timedelta(seconds=i)
-#         point = TelemetryPoint(
-#             ts_utc= ts,
-#             meta=Meta(run_id=run_id, vehicle_id="veh_01", phone_id="a53_01", operator="Dialog", rat="LTE"),
-#             radio=Radio(
-#                 rsrp_dbm=random.randint(-115, -85),
-#                 rsrq_db=random.randint(-18, -8),
-#                 sinr_db=random.randint(0, 18),
-#                 cell_id="41322109",
-#                 pci=112,
-#                 earfcn=1650,
-#                 band="B3"
-#             ),
-#             gps=Gps(
-#                 lat=round(lat + random.uniform(-0.005, 0.005), 6),
-#                 lon=round(lon + random.uniform(-0.005, 0.005), 6),
-#                 alt_m=round(17.4 + random.uniform(-10, 10), 1),
-#                 speed_mps=round(11.2 + random.uniform(-5, 5), 1),
-#                 heading_deg=182.5,
-#                 fix_quality=1,
-#                 satellites=14,
-#                 gps_ts=ts
-#             ),
-#             env=Env(
-#                 light_lux=round(random.uniform(5, 80), 1),
-#                 temp_c=round(random.uniform(35, 45), 1),
-#                 shade_flag=random.choice([True, False]),
-#                 humidity=round(random.uniform(78, 90), 1)
-#             ),
-#             ingest=Ingest(pi_id="pi_gateway_01", phone_seq=10000 + i, received_at=ts + timedelta(milliseconds=300))
-#         )
-#         doc = point.model_dump()
-#         doc["location"] = {"type": "Point", "coordinates": [point.gps.lon, point.gps.lat]}
-#         points.append(doc)
-
-#     await app.state.collection.insert_many(points)
-#     return {"status": "seeded", "run_id": run_id, "points": num_points, "message": "Ready for frontend charts!"}
+    uvicorn.run(
+        "src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )
