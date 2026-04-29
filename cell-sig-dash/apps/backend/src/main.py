@@ -142,6 +142,51 @@ async def seed_dummy_data(
     await app.state.collection.insert_many(points)
     return {"status": "seeded", "run_id": run_id, "points": num_points, "message": "Ready for frontend charts!"}
 
+# ROUTE FOR HEXBIN MAP - MNO COVERAGE VIEW (can be extended later for signal strength hexbins)
+@app.get("/api/hexbin")
+async def get_hexbin(
+    operator: str = Query("Dialog", description="Operator name"),
+    run_id: str | None = Query(None, description="Optional run_id filter"),
+    limit: int = Query(5000, le=20000, description="Maximum number of raw points to return")
+):
+    query = {}
+    if run_id:
+        query["meta.run_id"] = run_id
+
+    pipeline = [
+        {"$match": query},
+        {
+            "$project": {
+                "location": 1,
+                "rsrp": f"$operators.{operator}.rsrp_dbm",
+                "sinr": f"$operators.{operator}.sinr_db",
+            }
+        },
+        {"$match": {"rsrp": {"$ne": None}}},
+        {"$limit": limit},
+    ]
+
+    cursor = app.state.collection.aggregate(pipeline)
+    data = await cursor.to_list(None)
+
+    features = []
+    for d in data:
+        if "location" not in d or not d["location"]:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": d["location"],
+            "properties": {
+                "rsrp": d.get("rsrp"),
+                "sinr": d.get("sinr"),
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.main:app", host = "0.0.0.0", port=8000, reload = True)
