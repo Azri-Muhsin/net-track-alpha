@@ -154,6 +154,15 @@ export default function HexMap() {
 
   const apiBase = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+  const legendItems = [
+    { label: "RSRP ≥ -70 dBm", color: "#1a9850" },
+    { label: "-80 to -70 dBm", color: "#66bd63" },
+    { label: "-90 to -80 dBm", color: "#d9ef8b" },
+    { label: "-100 to -90 dBm", color: "#fee08b" },
+    { label: "-110 to -100 dBm", color: "#fc8d59" },
+    { label: "< -110 dBm", color: "#d73027" },
+  ];
+
   async function fetchSignalData(operator: string) {
     const response = await fetch(
       `${apiBase}/api/hexbin?operator=${encodeURIComponent(operator)}&limit=15000`
@@ -366,10 +375,47 @@ export default function HexMap() {
           </div>
         )}
       </div>
-      <div
-        ref={containerRef}
-        style={{ width: "100%", height: "550px", borderRadius: "12px", overflow: "hidden" }}
-      />
+      <div style={{ position: "relative", width: "100%" }}>
+        <div
+          ref={containerRef}
+          style={{ width: "100%", height: "550px", borderRadius: "12px", overflow: "hidden" }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 12,
+            left: 12,
+            zIndex: 10,
+            background: theme === "dark" ? "rgba(0,0,0,0.72)" : "rgba(255,255,255,0.95)",
+            color: theme === "dark" ? "#ffffff" : "#111111",
+            borderRadius: 12,
+            padding: "10px 14px",
+            minWidth: 180,
+            boxShadow: "0 8px 20px rgba(0,0,0,0.18)",
+            fontSize: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>RSRP legend</div>
+          {legendItems.map((item) => (
+            <div key={item.label} style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+              <span
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: 4,
+                  background: item.color,
+                  display: "inline-block",
+                  marginRight: 8,
+                  border: "1px solid rgba(0,0,0,0.1)",
+                }}
+              />
+              <span>{item.label}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 8, opacity: 0.8 }}>Dark green = strong coverage, red = weak coverage.</div>
+        </div>
+      </div>
     </div>
   );
 }
