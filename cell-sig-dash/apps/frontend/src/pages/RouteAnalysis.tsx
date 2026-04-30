@@ -4,6 +4,8 @@ import * as d3 from "d3";
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
 
+const GEOJSON_PATH = "/sri_lanka_districts.geojson";
+
 interface RunSummary {
   run_id: string;
   vehicle_id?: string;
