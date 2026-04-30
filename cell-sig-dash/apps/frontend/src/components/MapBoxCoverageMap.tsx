@@ -84,7 +84,7 @@ export default function MapBoxCoverageMap({
     }
 
     return {
-      ...geoJson,
+      type: "FeatureCollection",
       features: geoJson.features.map((feature: any) => {
         const districtName = getDistrictName(feature);
         const stat = districtStatsByName.get(cleanName(districtName));
@@ -120,7 +120,9 @@ export default function MapBoxCoverageMap({
           (p) =>
             typeof p.lat === "number" &&
             typeof p.lon === "number" &&
-            typeof p.rsrp_dbm === "number"
+            typeof p.rsrp_dbm === "number" &&
+            !Number.isNaN(p.lat) &&
+            !Number.isNaN(p.lon)
         )
         .map((p) => ({
           type: "Feature",
@@ -140,15 +142,8 @@ export default function MapBoxCoverageMap({
   }, [points]);
 
   useEffect(() => {
-    console.log("Mapbox debug:", {
-      tokenExists: Boolean(MAPBOX_TOKEN),
-      hasContainer: Boolean(mapContainerRef.current),
-      districts: districtGeoJson.features.length,
-      points: pointGeoJson.features.length,
-    });
-
     if (!MAPBOX_TOKEN) {
-      console.error("Missing VITE_MAPBOX_TOKEN. Put it in apps/frontend/.env");
+      console.error("Missing VITE_MAPBOX_TOKEN in apps/frontend/.env");
       return;
     }
 
@@ -166,7 +161,6 @@ export default function MapBoxCoverageMap({
     });
 
     mapRef.current = map;
-
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
     map.on("load", () => {
@@ -209,12 +203,62 @@ export default function MapBoxCoverageMap({
       map.addSource("drive-points", {
         type: "geojson",
         data: pointGeoJson as any,
+        cluster: true,
+        clusterRadius: 45,
+        clusterMaxZoom: 11,
+      });
+
+      map.addLayer({
+        id: "drive-clusters",
+        type: "circle",
+        source: "drive-points",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            "#22c55e",
+            100,
+            "#facc15",
+            500,
+            "#f97316",
+            1000,
+            "#ef4444",
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            16,
+            100,
+            22,
+            500,
+            28,
+            1000,
+            34,
+          ],
+          "circle-opacity": 0.8,
+        },
+      });
+
+      map.addLayer({
+        id: "drive-cluster-count",
+        type: "symbol",
+        source: "drive-points",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 12,
+        },
+        paint: {
+          "text-color": "#ffffff",
+        },
       });
 
       map.addLayer({
         id: "drive-points-layer",
         type: "circle",
         source: "drive-points",
+        filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-radius": 4,
           "circle-color": [
@@ -233,6 +277,27 @@ export default function MapBoxCoverageMap({
         },
       });
 
+      map.on("click", "drive-clusters", async (e) => {
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: ["drive-clusters"],
+        });
+
+        const clusterId = features[0]?.properties?.cluster_id;
+
+        const source = map.getSource("drive-points") as GeoJSONSource;
+
+        if (!clusterId || !source) return;
+
+        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+          if (err || zoom == null) return;
+
+          map.easeTo({
+            center: (features[0].geometry as any).coordinates,
+            zoom,
+          });
+        });
+      });
+
       map.on("click", "district-fills", (e) => {
         const feature = e.features?.[0];
         const name = feature?.properties?.districtName;
@@ -247,6 +312,7 @@ export default function MapBoxCoverageMap({
         if (!feature || !e.lngLat) return;
 
         const p = feature.properties as any;
+
         popupRef.current?.remove();
 
         popupRef.current = new mapboxgl.Popup({
@@ -273,6 +339,7 @@ export default function MapBoxCoverageMap({
 
       map.on("click", "drive-points-layer", (e) => {
         const feature = e.features?.[0];
+
         if (!feature || !e.lngLat) return;
 
         const p = feature.properties as any;
@@ -302,6 +369,7 @@ export default function MapBoxCoverageMap({
 
   useEffect(() => {
     const map = mapRef.current;
+
     if (!map || !map.isStyleLoaded()) return;
 
     const source = map.getSource("districts") as GeoJSONSource | undefined;
@@ -310,6 +378,7 @@ export default function MapBoxCoverageMap({
 
   useEffect(() => {
     const map = mapRef.current;
+
     if (!map || !map.isStyleLoaded()) return;
 
     const source = map.getSource("drive-points") as GeoJSONSource | undefined;

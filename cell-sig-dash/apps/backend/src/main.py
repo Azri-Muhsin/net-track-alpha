@@ -1,24 +1,18 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
+from typing import Any
 import json
 import os
 import random
-from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from src.schemas.telemetry import (
-    TelemetryPoint,
-    Meta,
-    Gps,
-    Env,
-    Ingest,
-    OperatorSignal,
-)
+from src.schemas.telemetry import TelemetryPoint
 
 load_dotenv()
 
@@ -71,6 +65,12 @@ def serialize_datetime(value: Any):
     return value
 
 
+def clean_district_name(value: str | None):
+    if not value:
+        return "Unknown"
+    return value.replace(" District", "").strip()
+
+
 def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
     points = []
 
@@ -83,8 +83,11 @@ def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
     lat = gps.get("lat")
     lon = gps.get("lon")
 
-    district = doc.get("district") or doc.get("ingest", {}).get("district")
-    province = doc.get("province") or doc.get("ingest", {}).get("province")
+    district = clean_district_name(
+        doc.get("district") or doc.get("ingest", {}).get("district")
+    )
+
+    province = doc.get("province") or doc.get("ingest", {}).get("province") or "Sri Lanka"
 
     run_id = meta.get("run_id")
     vehicle_id = meta.get("vehicle_id")
@@ -159,6 +162,32 @@ def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
     return points
 
 
+def build_base_query(
+    run_id: str | None,
+    district: str | None,
+    start_ts: str | None,
+    end_ts: str | None,
+):
+    query: dict[str, Any] = {}
+
+    if run_id:
+        query["meta.run_id"] = run_id
+
+    if district and district != "All Districts":
+        query["district"] = district
+
+    if start_ts or end_ts:
+        query["ts_utc"] = {}
+
+        if start_ts:
+            query["ts_utc"]["$gte"] = parse_iso_datetime(start_ts)
+
+        if end_ts:
+            query["ts_utc"]["$lte"] = parse_iso_datetime(end_ts)
+
+    return query
+
+
 @app.get("/")
 async def root():
     return {"message": "API is running"}
@@ -222,49 +251,94 @@ async def get_telemetry(
 
 
 @app.get("/api/dashboard/summary")
-async def get_summary(
+async def get_dashboard_summary(
     run_id: str | None = Query(None),
     operator: str | None = Query(None),
     district: str | None = Query(None),
     threshold: int = Query(-110),
     start_ts: str | None = Query(None),
     end_ts: str | None = Query(None),
-    limit: int = Query(20000, le=50000),
+    scan_limit: int = Query(100000, le=200000),
 ):
-    query: dict[str, Any] = {}
+    query = build_base_query(run_id, district, start_ts, end_ts)
 
-    if run_id:
-        query["meta.run_id"] = run_id
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
 
-    if district and district != "All Districts":
-        query["district"] = district
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(scan_limit)
+    )
 
-    if start_ts or end_ts:
-        query["ts_utc"] = {}
+    docs = await cursor.to_list(length=scan_limit)
 
-        if start_ts:
-            query["ts_utc"]["$gte"] = parse_iso_datetime(start_ts)
-
-        if end_ts:
-            query["ts_utc"]["$lte"] = parse_iso_datetime(end_ts)
-
-    cursor = app.state.collection.find(query).sort("ts_utc", 1).limit(limit)
-    docs = await cursor.to_list(length=limit)
-
-    points = []
+    all_points = []
 
     for doc in docs:
-        points.extend(flatten_doc_to_points(doc, selected_operator=operator))
+        all_points.extend(flatten_doc_to_points(doc, selected_operator=operator))
 
-    valid_rsrp_points = [
-        p for p in points if isinstance(p.get("rsrp_dbm"), (int, float))
+    valid_points = [
+        p
+        for p in all_points
+        if isinstance(p.get("rsrp_dbm"), (int, float))
     ]
 
-    rsrp_vals = [p["rsrp_dbm"] for p in valid_rsrp_points]
-    weak_count = sum(1 for p in valid_rsrp_points if p["rsrp_dbm"] <= threshold)
-    critical_count = sum(1 for p in valid_rsrp_points if p["rsrp_dbm"] <= -120)
+    rsrp_vals = [p["rsrp_dbm"] for p in valid_points]
 
-    total = len(valid_rsrp_points)
+    weak_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= threshold)
+    critical_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= -120)
+
+    total = len(valid_points)
+
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for p in valid_points:
+        district_name = clean_district_name(p.get("district"))
+        province_name = p.get("province") or "Sri Lanka"
+
+        if district_name not in grouped:
+            grouped[district_name] = {
+                "districtName": district_name,
+                "province": province_name,
+                "values": [],
+            }
+
+        grouped[district_name]["values"].append(p["rsrp_dbm"])
+
+    district_stats = []
+
+    for district_name, data in grouped.items():
+        values = data["values"]
+        total_samples = len(values)
+        district_weak = sum(1 for v in values if v <= threshold)
+
+        district_stats.append(
+            {
+                "districtName": district_name,
+                "province": data["province"],
+                "totalSamples": total_samples,
+                "weakPercent": round((district_weak / total_samples) * 100)
+                if total_samples
+                else 0,
+                "avgRsrp": round(sum(values) / total_samples)
+                if total_samples
+                else None,
+                "medianRsrp": round(median(values)) if values else None,
+            }
+        )
+
+    district_stats.sort(key=lambda d: d["weakPercent"], reverse=True)
 
     return {
         "run_id": run_id,
@@ -272,11 +346,63 @@ async def get_summary(
         "district": district,
         "threshold": threshold,
         "total_samples": total,
-        "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1) if rsrp_vals else None,
-        "weak_coverage_percent": round((weak_count / total) * 100, 1) if total else 0,
+        "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1)
+        if rsrp_vals
+        else None,
+        "weak_coverage_percent": round((weak_count / total) * 100, 1)
+        if total
+        else 0,
         "critical_count": critical_count,
-        "points": points,
+        "district_stats": district_stats,
     }
+
+
+@app.get("/api/dashboard/points")
+async def get_dashboard_points(
+    run_id: str | None = Query(None),
+    operator: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+    limit: int = Query(3000, le=10000),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(limit)
+    )
+
+    docs = await cursor.to_list(length=limit)
+
+    points = []
+
+    for doc in docs:
+        points.extend(flatten_doc_to_points(doc, selected_operator=operator))
+
+    valid_points = [
+        p
+        for p in points
+        if isinstance(p.get("lat"), (int, float))
+        and isinstance(p.get("lon"), (int, float))
+        and isinstance(p.get("rsrp_dbm"), (int, float))
+    ]
+
+    return valid_points[:limit]
 
 
 @app.get("/api/runs")
@@ -299,12 +425,27 @@ async def get_runs():
     cursor = app.state.collection.aggregate(pipeline)
     runs = await cursor.to_list(length=None)
 
-    for run in runs:
-        run["run_id"] = run.pop("_id")
-        run["start_time"] = serialize_datetime(run.get("start_time"))
-        run["end_time"] = serialize_datetime(run.get("end_time"))
+    cleaned = []
 
-    return runs
+    for run in runs:
+        run_id = run.pop("_id", None)
+
+        if not run_id:
+            continue
+
+        cleaned.append(
+            {
+                "run_id": run_id,
+                "vehicle_id": run.get("vehicle_id"),
+                "start_time": serialize_datetime(run.get("start_time")),
+                "end_time": serialize_datetime(run.get("end_time")),
+                "point_count": run.get("point_count", 0),
+                "district": run.get("district"),
+                "province": run.get("province"),
+            }
+        )
+
+    return cleaned
 
 
 @app.get("/api/operators")
@@ -327,16 +468,27 @@ async def seed_dummy_data(
     num_points: int = Query(1000),
     run_id: str = Query("run_test_001"),
 ):
-    operators = ["Dialog", "Mobitel", "Hutch"]
+    operators = ["Dialog", "Mobitel", "Hutch", "Airtel"]
     base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     start_lat, start_lon = 6.9271, 79.8612
     docs = []
 
+    districts = [
+        ("Colombo", "Western"),
+        ("Gampaha", "Western"),
+        ("Kalutara", "Western"),
+        ("Kandy", "Central"),
+        ("Galle", "Southern"),
+    ]
+
     for i in range(num_points):
         ts = base_time + timedelta(seconds=i)
-        lat = round(start_lat + random.uniform(-0.15, 0.15), 6)
-        lon = round(start_lon + random.uniform(-0.10, 0.10), 6)
+
+        district_name, province_name = random.choice(districts)
+
+        lat = round(start_lat + random.uniform(-0.3, 0.3), 6)
+        lon = round(start_lon + random.uniform(-0.3, 0.3), 6)
 
         operators_payload = {}
 
@@ -380,8 +532,8 @@ async def seed_dummy_data(
                 "phone_seq": 10000 + i,
                 "received_at": ts + timedelta(milliseconds=300),
             },
-            "district": "Colombo",
-            "province": "Western",
+            "district": district_name,
+            "province": province_name,
             "route_name": run_id,
             "signal_quality_profile": "mixed",
             "operators": operators_payload,
@@ -462,6 +614,7 @@ async def websocket_phone_radio(websocket: WebSocket):
 
     except Exception as e:
         print(f"WebSocket error: {e}")
+
         try:
             await websocket.close()
         except Exception:

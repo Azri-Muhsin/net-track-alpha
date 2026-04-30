@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import * as d3 from "d3";
 import "./App.css";
 import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
 import Layout from "./components/Layout";
@@ -23,12 +22,6 @@ interface DistrictStat {
   medianRsrp: number | null;
 }
 
-const GEOJSON_PATH = "/sri_lanka_districts.geojson";
-const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
-
-type DateRangeId = "24h" | "7d" | "30d" | "all";
-
 interface RunSummary {
   run_id: string;
   vehicle_id?: string;
@@ -39,13 +32,21 @@ interface RunSummary {
 interface DashboardSummaryResponse {
   run_id: string | null;
   operator: string | null;
+  district: string | null;
   threshold: number;
   total_samples: number;
   avg_rsrp: number | null;
   weak_coverage_percent: number;
   critical_count: number;
-  points: DashboardPoint[];
+  district_stats: DistrictStat[];
 }
+
+type DateRangeId = "24h" | "7d" | "30d" | "all";
+
+const GEOJSON_PATH = "/sri_lanka_districts.geojson";
+
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
 
 function getDistrictName(feature: any) {
   const raw =
@@ -58,23 +59,11 @@ function getDistrictName(feature: any) {
   return raw.replace(" District", "").trim();
 }
 
-function getProvinceName(feature: any) {
-  return (
-    feature.properties.shapeGroup ||
-    feature.properties.province ||
-    feature.properties.NAME_1 ||
-    "Sri Lanka"
-  );
-}
-
-function cleanName(name: string) {
-  return name.replace(" District", "").trim().toLowerCase();
-}
-
 function dateRangeToStartTs(range: DateRangeId) {
   if (range === "all") return null;
 
   const now = new Date();
+
   const ms =
     range === "24h"
       ? 24 * 60 * 60 * 1000
@@ -86,23 +75,23 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [points, setPoints] = useState<DashboardPoint[]>([]);
-  const [prevPoints, setPrevPoints] = useState<DashboardPoint[]>([]);
+  const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [prevSummary, setPrevSummary] =
     useState<DashboardSummaryResponse | null>(null);
 
-  const [districtGeo, setDistrictGeo] = useState<any>(null);
-  const [apiError, setApiError] = useState<string | null>(null);
-  const [geoError, setGeoError] = useState<string | null>(null);
-  const [threshold, setThreshold] = useState(-110);
-  const [loading, setLoading] = useState(false);
-
+  const [points, setPoints] = useState<DashboardPoint[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
+
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
   const [selectedDistrict, setSelectedDistrict] = useState("All Districts");
   const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+  const [threshold, setThreshold] = useState(-110);
+
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const rangeMs = useMemo(() => {
     if (dateRange === "all") return null;
@@ -111,19 +100,61 @@ export default function App() {
     return 30 * 24 * 60 * 60 * 1000;
   }, [dateRange]);
 
+  const makeParams = (
+    start_ts?: string | null,
+    end_ts?: string | null,
+    includeDistrict = true
+  ) => {
+    const p = new URLSearchParams();
+
+    if (selectedRunId) p.set("run_id", selectedRunId);
+    if (selectedOperator) p.set("operator", selectedOperator);
+
+    if (
+      includeDistrict &&
+      selectedDistrict &&
+      selectedDistrict !== "All Districts"
+    ) {
+      p.set("district", selectedDistrict);
+    }
+
+    p.set("threshold", String(threshold));
+
+    if (start_ts) p.set("start_ts", start_ts);
+    if (end_ts) p.set("end_ts", end_ts);
+
+    return p;
+  };
+
   const fetchRuns = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/runs`);
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+      if (!res.ok) {
+        throw new Error(`Runs API error: ${res.status}`);
+      }
 
       const data = (await res.json()) as RunSummary[];
       setRuns(data);
-
-      if (!selectedRunId && data.length > 0) {
-        setSelectedRunId(data[0].run_id);
-      }
     } catch (err: any) {
       setApiError(err.message);
+    }
+  };
+
+  const loadGeoJson = async () => {
+    try {
+      setGeoError(null);
+
+      const res = await fetch(GEOJSON_PATH);
+
+      if (!res.ok) {
+        throw new Error("sri_lanka_districts.geojson not found in public/");
+      }
+
+      const data = await res.json();
+      setDistrictGeo(data);
+    } catch (err: any) {
+      setGeoError(err.message);
     }
   };
 
@@ -135,40 +166,22 @@ export default function App() {
       const nowIso = new Date().toISOString();
       const startIso = dateRangeToStartTs(dateRange);
 
-      const makeParams = (start_ts?: string | null, end_ts?: string | null) => {
-        const p = new URLSearchParams();
-
-        if (selectedRunId) p.set("run_id", selectedRunId);
-        if (selectedOperator) p.set("operator", selectedOperator);
-        if (selectedDistrict !== "All Districts") {
-          p.set("district", selectedDistrict);
-        }
-
-        p.set("threshold", String(threshold));
-        p.set("limit", "20000");
-
-        if (start_ts) p.set("start_ts", start_ts);
-        if (end_ts) p.set("end_ts", end_ts);
-
-        return p;
-      };
-
       const currentRes = await fetch(
         `${API_BASE_URL}/api/dashboard/summary?${makeParams(
           startIso,
-          nowIso
+          nowIso,
+          false
         ).toString()}`
       );
 
-      if (!currentRes.ok) throw new Error(`API error: ${currentRes.status}`);
+      if (!currentRes.ok) {
+        throw new Error(`Dashboard API error: ${currentRes.status}`);
+      }
 
       const currentData =
         (await currentRes.json()) as DashboardSummaryResponse;
 
-      console.log("Dashboard API response:", currentData);
-
       setSummary(currentData);
-      setPoints(currentData.points ?? []);
 
       if (rangeMs && startIso) {
         const prevStart = new Date(
@@ -178,7 +191,8 @@ export default function App() {
         const prevRes = await fetch(
           `${API_BASE_URL}/api/dashboard/summary?${makeParams(
             prevStart,
-            startIso
+            startIso,
+            false
           ).toString()}`
         );
 
@@ -186,33 +200,30 @@ export default function App() {
           const prevData =
             (await prevRes.json()) as DashboardSummaryResponse;
           setPrevSummary(prevData);
-          setPrevPoints(prevData.points ?? []);
         } else {
           setPrevSummary(null);
-          setPrevPoints([]);
         }
       } else {
         setPrevSummary(null);
-        setPrevPoints([]);
+      }
+
+      const pointsParams = makeParams(startIso, nowIso, true);
+      pointsParams.set("limit", "3000");
+
+      const pointsRes = await fetch(
+        `${API_BASE_URL}/api/dashboard/points?${pointsParams.toString()}`
+      );
+
+      if (pointsRes.ok) {
+        const pointData = (await pointsRes.json()) as DashboardPoint[];
+        setPoints(pointData);
+      } else {
+        setPoints([]);
       }
     } catch (err: any) {
       setApiError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadGeoJson = async () => {
-    try {
-      setGeoError(null);
-
-      const res = await fetch(GEOJSON_PATH);
-      if (!res.ok) throw new Error("sri_lanka_districts.geojson not found");
-
-      const data = await res.json();
-      setDistrictGeo(data);
-    } catch (err: any) {
-      setGeoError(err.message);
     }
   };
 
@@ -225,133 +236,28 @@ export default function App() {
     fetchDashboardData();
   }, [selectedRunId, selectedOperator, selectedDistrict, threshold, dateRange]);
 
-  const selectedDistrictFeature = useMemo(() => {
-    if (!districtGeo || selectedDistrict === "All Districts") return null;
-
-    return (
-      districtGeo.features.find(
-        (f: any) => cleanName(getDistrictName(f)) === cleanName(selectedDistrict)
-      ) ?? null
-    );
-  }, [districtGeo, selectedDistrict]);
-
-  const validPoints = useMemo(() => {
-    const base = points.filter(
-      (p) =>
-        typeof p.lat === "number" &&
-        typeof p.lon === "number" &&
-        typeof p.rsrp_dbm === "number" &&
-        !Number.isNaN(p.lat) &&
-        !Number.isNaN(p.lon)
-    );
-
-    if (!selectedDistrictFeature) return base;
-
-    return base.filter((p) =>
-      d3.geoContains(selectedDistrictFeature, [p.lon as number, p.lat as number])
-    );
-  }, [points, selectedDistrictFeature]);
-
-  const prevValidPoints = useMemo(() => {
-    const base = prevPoints.filter(
-      (p) =>
-        typeof p.lat === "number" &&
-        typeof p.lon === "number" &&
-        typeof p.rsrp_dbm === "number" &&
-        !Number.isNaN(p.lat) &&
-        !Number.isNaN(p.lon)
-    );
-
-    if (!selectedDistrictFeature) return base;
-
-    return base.filter((p) =>
-      d3.geoContains(selectedDistrictFeature, [p.lon as number, p.lat as number])
-    );
-  }, [prevPoints, selectedDistrictFeature]);
-
-  const avgRsrp = summary?.avg_rsrp ?? null;
-  const prevAvgRsrp = prevSummary?.avg_rsrp ?? null;
-  const weakCoverage = summary?.weak_coverage_percent ?? 0;
-  const prevWeakCoverage = prevSummary?.weak_coverage_percent ?? 0;
-
-  const buildDistrictStats = (
-    inputPoints: DashboardPoint[]
-  ): DistrictStat[] => {
-    if (!districtGeo || !inputPoints.length) return [];
-
-    return districtGeo.features.map((feature: any) => {
-      const name = getDistrictName(feature);
-      const province = getProvinceName(feature);
-
-      const dPoints = inputPoints.filter((p) =>
-        d3.geoContains(feature, [p.lon as number, p.lat as number])
-      );
-
-      const weak = dPoints.filter((p) => (p.rsrp_dbm ?? 0) <= threshold);
-
-      const rsrpSorted = dPoints
-        .map((p) => p.rsrp_dbm)
-        .filter((v): v is number => typeof v === "number")
-        .sort((a, b) => a - b);
-
-      const avg =
-        dPoints.length > 0
-          ? Math.round(
-              dPoints.reduce((sum, p) => sum + (p.rsrp_dbm ?? 0), 0) /
-                dPoints.length
-            )
-          : null;
-
-      const median =
-        rsrpSorted.length === 0
-          ? null
-          : rsrpSorted.length % 2 === 1
-            ? rsrpSorted[(rsrpSorted.length - 1) / 2]
-            : Math.round(
-                (rsrpSorted[rsrpSorted.length / 2 - 1] +
-                  rsrpSorted[rsrpSorted.length / 2]) /
-                  2
-              );
-
-      return {
-        districtName: name,
-        province,
-        totalSamples: dPoints.length,
-        weakPercent: dPoints.length
-          ? Math.round((weak.length / dPoints.length) * 100)
-          : 0,
-        avgRsrp: avg,
-        medianRsrp: median,
-      };
-    });
-  };
-
-  const districtStats = useMemo(
-    () => buildDistrictStats(validPoints),
-    [districtGeo, validPoints, threshold]
-  );
-
-  const prevDistrictStats = useMemo(
-    () => buildDistrictStats(prevValidPoints),
-    [districtGeo, prevValidPoints, threshold]
-  );
+  const districtStats = summary?.district_stats ?? [];
 
   const activeDistricts = districtStats.filter((d) => d.totalSamples > 0);
-  const prevActiveDistricts = prevDistrictStats.filter(
-    (d) => d.totalSamples > 0
-  );
 
   const worstDistricts = [...activeDistricts]
     .sort((a, b) => b.weakPercent - a.weakPercent)
     .slice(0, 8);
 
+  const avgRsrp = summary?.avg_rsrp ?? null;
+  const prevAvgRsrp = prevSummary?.avg_rsrp ?? null;
+
+  const weakCoverage = summary?.weak_coverage_percent ?? 0;
+  const prevWeakCoverage = prevSummary?.weak_coverage_percent ?? 0;
+
   const criticalDistricts = activeDistricts.filter(
     (d) => d.weakPercent > 45
   ).length;
 
-  const prevCriticalDistricts = prevActiveDistricts.filter(
-    (d) => d.weakPercent > 45
-  ).length;
+  const prevCriticalDistricts =
+    prevSummary?.district_stats?.filter(
+      (d) => d.totalSamples > 0 && d.weakPercent > 45
+    ).length ?? 0;
 
   const goodDistricts = activeDistricts.filter(
     (d) => d.weakPercent <= 10
@@ -375,11 +281,11 @@ export default function App() {
   }, [activeDistricts]);
 
   const deltaBadge = (value: number | null, suffix: string) => {
-    if (value === null) return null;
+    if (value === null || Number.isNaN(value)) return null;
 
     const sign = value > 0 ? "▲" : value < 0 ? "▼" : "•";
     const cls = value > 0 ? "delta up" : value < 0 ? "delta down" : "delta flat";
-    const abs = Math.abs(value);
+    const abs = Math.abs(Number(value.toFixed(1)));
 
     return (
       <span className={cls}>
@@ -390,8 +296,10 @@ export default function App() {
 
   const deltas = {
     avgDelta:
-      avgRsrp !== null && prevAvgRsrp !== null ? avgRsrp - prevAvgRsrp : null,
-    weakDelta: weakCoverage - prevWeakCoverage,
+      avgRsrp !== null && prevAvgRsrp !== null
+        ? Number((avgRsrp - prevAvgRsrp).toFixed(1))
+        : null,
+    weakDelta: Number((weakCoverage - prevWeakCoverage).toFixed(1)),
     criticalDelta: criticalDistricts - prevCriticalDistricts,
   };
 
@@ -441,7 +349,7 @@ export default function App() {
         <div className="nt-filter">
           <label>MNO</label>
           <div className="nt-mno">
-            {["Dialog", "Mobitel", "Airtel", "Hutch"].map((op) => (
+            {["Dialog", "Mobitel", "Hutch"].map((op) => (
               <button
                 key={op}
                 className={`mno ${op.toLowerCase()} ${
@@ -468,7 +376,9 @@ export default function App() {
               value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
             />
+
             <div className="nt-threshold-val">{threshold} dBm</div>
+
             <button
               className="nt-pill"
               type="button"
@@ -491,6 +401,8 @@ export default function App() {
             value={selectedRunId}
             onChange={(e) => setSelectedRunId(e.target.value)}
           >
+            <option value="">All Runs</option>
+
             {runs.length ? (
               runs.map((r) => (
                 <option key={r.run_id} value={r.run_id}>
@@ -498,7 +410,9 @@ export default function App() {
                 </option>
               ))
             ) : (
-              <option value="">No runs found</option>
+              <option value="" disabled>
+                No runs found
+              </option>
             )}
           </select>
         </div>
@@ -522,8 +436,10 @@ export default function App() {
             <p>AVG RSRP</p>
             <span className="kpi-icon">≋</span>
           </div>
-          <h2 className="yellow">{avgRsrp !== null ? avgRsrp : "N/A"} dBm</h2>
-          <small>National average</small>
+          <h2 className="yellow">
+            {avgRsrp !== null ? avgRsrp : "N/A"} dBm
+          </h2>
+          <small>Selected average</small>
           <div className="kpi-foot">
             {deltaBadge(deltas.avgDelta, "dBm")}
             <span className="kpi-foot-label">vs previous period</span>
@@ -536,7 +452,7 @@ export default function App() {
             <span className="kpi-icon warn">△</span>
           </div>
           <h2 className="orange">{weakCoverage}%</h2>
-          <small>&lt; {threshold} dBm threshold</small>
+          <small>&lt;= {threshold} dBm threshold</small>
           <div className="kpi-foot">
             {deltaBadge(deltas.weakDelta, "%")}
             <span className="kpi-foot-label">vs previous period</span>
@@ -561,14 +477,26 @@ export default function App() {
         <div className="section-title">
           <div>
             <h2>District Coverage Choropleth</h2>
-            <p>RSRP weakness by district — click or hover to inspect</p>
+            <p>Aggregated RSRP weakness by district</p>
           </div>
 
           <div className="legend">
-            <span><i className="dot excellent" />Excellent</span>
-            <span><i className="dot good" />Good</span>
-            <span><i className="dot fair" />Fair</span>
-            <span><i className="dot poor" />Poor</span>
+            <span>
+              <i className="dot excellent" />
+              Excellent
+            </span>
+            <span>
+              <i className="dot good" />
+              Good
+            </span>
+            <span>
+              <i className="dot fair" />
+              Fair
+            </span>
+            <span>
+              <i className="dot poor" />
+              Poor
+            </span>
           </div>
         </div>
 
@@ -578,7 +506,7 @@ export default function App() {
               <MapBoxCoverageMap
                 geoJson={districtGeo}
                 districtStats={districtStats}
-                points={validPoints}
+                points={points}
                 selectedDistrict={selectedDistrict}
                 onSelectDistrict={setSelectedDistrict}
               />
@@ -589,10 +517,22 @@ export default function App() {
 
           <aside className="map-side">
             <h3>WEAK % SCALE</h3>
-            <p><i className="dot excellent" />&lt; 10%</p>
-            <p><i className="dot good" />10–25%</p>
-            <p><i className="dot fair" />25–45%</p>
-            <p><i className="dot poor" />&gt; 45%</p>
+            <p>
+              <i className="dot excellent" />
+              &lt; 10%
+            </p>
+            <p>
+              <i className="dot good" />
+              10–25%
+            </p>
+            <p>
+              <i className="dot fair" />
+              25–45%
+            </p>
+            <p>
+              <i className="dot poor" />
+              &gt; 45%
+            </p>
 
             <h3>QUICK JUMP</h3>
             {worstDistricts.slice(0, 5).map((d) => (
@@ -622,6 +562,7 @@ export default function App() {
         {worstDistricts.map((d, index) => (
           <div className="rank-row" key={d.districtName}>
             <span>{index + 1}</span>
+
             <strong>
               <i className="dot poor" />
               {d.districtName}
@@ -667,6 +608,7 @@ export default function App() {
 
       <section className="province-card">
         <h2>Province-Level Summary</h2>
+
         <div className="province-grid">
           {provinceSummary.map((p) => (
             <div className="province-box" key={p.province}>
