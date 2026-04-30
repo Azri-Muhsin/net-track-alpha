@@ -286,7 +286,9 @@ async def get_dashboard_summary(
     all_points = []
 
     for doc in docs:
-        all_points.extend(flatten_doc_to_points(doc, selected_operator=operator))
+        all_points.extend(
+            flatten_doc_to_points(doc, selected_operator=operator)
+        )
 
     valid_points = [
         p
@@ -294,12 +296,33 @@ async def get_dashboard_summary(
         if isinstance(p.get("rsrp_dbm"), (int, float))
     ]
 
-    rsrp_vals = [p["rsrp_dbm"] for p in valid_points]
+    rsrp_vals = [
+        p["rsrp_dbm"]
+        for p in valid_points
+        if isinstance(p.get("rsrp_dbm"), (int, float))
+    ]
 
-    weak_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= threshold)
-    critical_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= -120)
+    rsrq_vals = [
+        p["rsrq_db"]
+        for p in valid_points
+        if isinstance(p.get("rsrq_db"), (int, float))
+    ]
+
+    sinr_vals = [
+        p["sinr_db"]
+        for p in valid_points
+        if isinstance(p.get("sinr_db"), (int, float))
+    ]
 
     total = len(valid_points)
+
+    weak_count = sum(
+        1 for p in valid_points if p["rsrp_dbm"] <= threshold
+    )
+
+    critical_count = sum(
+        1 for p in valid_points if p["rsrp_dbm"] <= -120
+    )
 
     grouped: dict[str, dict[str, Any]] = {}
 
@@ -311,30 +334,55 @@ async def get_dashboard_summary(
             grouped[district_name] = {
                 "districtName": district_name,
                 "province": province_name,
-                "values": [],
+                "rsrp_values": [],
+                "rsrq_values": [],
+                "sinr_values": [],
             }
 
-        grouped[district_name]["values"].append(p["rsrp_dbm"])
+        if isinstance(p.get("rsrp_dbm"), (int, float)):
+            grouped[district_name]["rsrp_values"].append(p["rsrp_dbm"])
+
+        if isinstance(p.get("rsrq_db"), (int, float)):
+            grouped[district_name]["rsrq_values"].append(p["rsrq_db"])
+
+        if isinstance(p.get("sinr_db"), (int, float)):
+            grouped[district_name]["sinr_values"].append(p["sinr_db"])
 
     district_stats = []
 
     for district_name, data in grouped.items():
-        values = data["values"]
-        total_samples = len(values)
-        district_weak = sum(1 for v in values if v <= threshold)
+        rsrp_values = data["rsrp_values"]
+        rsrq_values = data["rsrq_values"]
+        sinr_values = data["sinr_values"]
+
+        total_samples = len(rsrp_values)
+
+        district_weak = sum(
+            1 for v in rsrp_values if v <= threshold
+        )
 
         district_stats.append(
             {
                 "districtName": district_name,
                 "province": data["province"],
                 "totalSamples": total_samples,
-                "weakPercent": round((district_weak / total_samples) * 100)
+                "weakPercent": round(
+                    (district_weak / total_samples) * 100
+                )
                 if total_samples
                 else 0,
-                "avgRsrp": round(sum(values) / total_samples)
+                "avgRsrp": round(sum(rsrp_values) / total_samples)
                 if total_samples
                 else None,
-                "medianRsrp": round(median(values)) if values else None,
+                "medianRsrp": round(median(rsrp_values))
+                if rsrp_values
+                else None,
+                "avgRsrq": round(sum(rsrq_values) / len(rsrq_values), 1)
+                if rsrq_values
+                else None,
+                "avgSinr": round(sum(sinr_values) / len(sinr_values), 1)
+                if sinr_values
+                else None,
             }
         )
 
@@ -349,13 +397,18 @@ async def get_dashboard_summary(
         "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1)
         if rsrp_vals
         else None,
+        "avg_rsrq": round(sum(rsrq_vals) / len(rsrq_vals), 1)
+        if rsrq_vals
+        else None,
+        "avg_sinr": round(sum(sinr_vals) / len(sinr_vals), 1)
+        if sinr_vals
+        else None,
         "weak_coverage_percent": round((weak_count / total) * 100, 1)
         if total
         else 0,
         "critical_count": critical_count,
         "district_stats": district_stats,
     }
-
 
 @app.get("/api/dashboard/points")
 async def get_dashboard_points(
