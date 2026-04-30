@@ -26,11 +26,11 @@ One phone sends radio samples to the Pi over USB. The Pi stores them in SQLite a
 Phone(s) -> Raspberry Pi -> SQLite local queue -> Cloud API / MongoDB -> Dashboard
 
 ## Current status
-- [ ] Shared schemas
-- [ ] Fake data generator
-- [ ] Pi ingest API
-- [ ] SQLite queue
-- [ ] Cloud ingest
+- [✅] Shared schemas
+- [✅] Fake data generator
+- [✅] Pi ingest API
+- [✅] SQLite queue
+- [✅] Cloud ingest
 - [ ] Real phone collector
 - [ ] GPS integration
 - [ ] Sensor integration
