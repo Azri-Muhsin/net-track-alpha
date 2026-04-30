@@ -1,177 +1,798 @@
-import { useEffect, useState, useRef } from 'react';
-import * as d3 from 'd3';
+import { useEffect, useMemo, useState } from "react";
+import * as d3 from "d3";
+import "./App.css";
+import SriLankaChoropleth from "./SriLankaChoropleth";
+import React from "react";
+import logo from "./assets/NetTrack_svg.svg";
 
-interface TelemetryPoint {
+interface DashboardPoint {
+  id: string;
   ts_utc: string;
-  radio: { rsrp_dbm: number; rsrq_db: number; sinr_db: number };
-  gps: { lat: number; lon: number };
-  meta: { run_id: string };
+  operator: string;
+  rsrp_dbm: number | null;
+  sinr_db: number | null;
+  lat: number | null;
+  lon: number | null;
 }
 
-function App() {
-  const [points, setPoints] = useState<TelemetryPoint[]>([]);
-  const [runId] = useState("run_test_001");
-  
-  // Ref for the D3 SVG container
-  const svgRef = useRef<SVGSVGElement | null>(null);
+interface DistrictStat {
+  districtName: string;
+  province: string;
+  totalSamples: number;
+  weakPercent: number;
+  avgRsrp: number | null;
+  medianRsrp: number | null;
+}
 
-  const fetchData = async () => {
+const GEOJSON_PATH = "/sri_lanka_districts.geojson";
+const API_BASE_URL =
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
+
+type DateRangeId = "24h" | "7d" | "30d" | "all";
+
+interface RunSummary {
+  run_id: string;
+  vehicle_id?: string;
+  operator?: string;
+  start_time?: string;
+  end_time?: string;
+  point_count?: number;
+}
+
+interface DashboardSummaryResponse {
+  run_id: string | null;
+  operator: string | null;
+  threshold: number;
+  total_samples: number;
+  avg_rsrp: number | null;
+  weak_coverage_percent: number;
+  critical_count: number;
+  points: DashboardPoint[];
+}
+
+function getDistrictName(feature: any) {
+  const raw =
+    feature.properties.shapeName ||
+    feature.properties.NAME_2 ||
+    feature.properties.district ||
+    feature.properties.name ||
+    "Unknown";
+
+  return raw.replace(" District", "").trim();
+}
+
+function getProvinceName(feature: any) {
+  return (
+    feature.properties.shapeGroup ||
+    feature.properties.province ||
+    feature.properties.NAME_1 ||
+    "Sri Lanka"
+  );
+}
+
+function cleanName(name: string) {
+  return name.replace(" District", "").trim().toLowerCase();
+}
+
+function dateRangeToStartTs(range: DateRangeId) {
+  if (range === "all") return null;
+  const now = new Date();
+  const ms =
+    range === "24h"
+      ? 24 * 60 * 60 * 1000
+      : range === "7d"
+        ? 7 * 24 * 60 * 60 * 1000
+        : 30 * 24 * 60 * 60 * 1000;
+  return new Date(now.getTime() - ms).toISOString();
+}
+
+export default function App() {
+  const [points, setPoints] = useState<DashboardPoint[]>([]);
+  const [prevPoints, setPrevPoints] = useState<DashboardPoint[]>([]);
+  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [prevSummary, setPrevSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [districtGeo, setDistrictGeo] = useState<any>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState(-110);
+  const [loading, setLoading] = useState(false);
+
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+  const [selectedDistrict, setSelectedDistrict] = useState<string>("All Districts");
+  const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+
+  const rangeMs = useMemo(() => {
+    if (dateRange === "all") return null;
+    if (dateRange === "24h") return 24 * 60 * 60 * 1000;
+    if (dateRange === "7d") return 7 * 24 * 60 * 60 * 1000;
+    return 30 * 24 * 60 * 60 * 1000;
+  }, [dateRange]);
+
+  const fetchRuns = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/telemetry?run_id=${runId}&limit=200`);
-      const data = await res.json();
-      setPoints(data);
-    } catch (err) {
-      console.error("Failed to fetch data:", err);
+      const res = await fetch(`${API_BASE_URL}/api/runs`);
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      const data = (await res.json()) as RunSummary[];
+      setRuns(data);
+      if (!selectedRunId && data?.length) {
+        setSelectedRunId(data[0].run_id);
+      }
+    } catch (err: any) {
+      setApiError(err.message);
     }
   };
 
-  const seedData = async () => {
-    await fetch(`http://localhost:8000/api/seed?num_points=100&run_id=${runId}`, { method: 'POST' });
-    fetchData();
+  const fetchDashboardData = async () => {
+    try {
+      setApiError(null);
+      setLoading(true);
+
+      const nowIso = new Date().toISOString();
+      const startIso = dateRangeToStartTs(dateRange);
+
+      const makeParams = (start_ts?: string | null, end_ts?: string | null) => {
+        const p = new URLSearchParams();
+        if (selectedRunId) p.set("run_id", selectedRunId);
+        if (selectedOperator) p.set("operator", selectedOperator);
+        if (selectedDistrict && selectedDistrict !== "All Districts") {
+          p.set("district", selectedDistrict);
+        }
+        p.set("threshold", String(threshold));
+        p.set("limit", "20000");
+        if (start_ts) p.set("start_ts", start_ts);
+        if (end_ts) p.set("end_ts", end_ts);
+        return p;
+      };
+
+      const currentRes = await fetch(
+        `${API_BASE_URL}/api/dashboard/summary?${makeParams(startIso, nowIso).toString()}`
+      );
+      if (!currentRes.ok) throw new Error(`API error: ${currentRes.status}`);
+      const currentData = (await currentRes.json()) as DashboardSummaryResponse;
+      setSummary(currentData);
+      setPoints(currentData.points ?? []);
+
+      if (rangeMs && startIso) {
+        const prevStart = new Date(new Date(startIso).getTime() - rangeMs).toISOString();
+        const prevEnd = startIso;
+        const prevRes = await fetch(
+          `${API_BASE_URL}/api/dashboard/summary?${makeParams(prevStart, prevEnd).toString()}`
+        );
+        if (prevRes.ok) {
+          const prevData = (await prevRes.json()) as DashboardSummaryResponse;
+          setPrevSummary(prevData);
+          setPrevPoints(prevData.points ?? []);
+        } else {
+          setPrevSummary(null);
+          setPrevPoints([]);
+        }
+      } else {
+        setPrevSummary(null);
+        setPrevPoints([]);
+      }
+    } catch (err: any) {
+      setApiError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadGeoJson = async () => {
+    try {
+      setGeoError(null);
+
+      const res = await fetch(GEOJSON_PATH);
+      if (!res.ok) throw new Error("sri_lanka_districts.geojson not found");
+
+      const data = await res.json();
+      setDistrictGeo(data);
+    } catch (err: any) {
+      setGeoError(err.message);
+    }
   };
 
   useEffect(() => {
-    fetchData();
+    fetchRuns();
+    loadGeoJson();
   }, []);
 
-  // --- D3 Chart Rendering Logic ---
   useEffect(() => {
-    if (points.length === 0 || !svgRef.current) return;
+    fetchDashboardData();
+  }, [selectedRunId, selectedOperator, threshold, dateRange]);
 
-    // 1. Setup Dimensions & SVG
-    const width = 900;
-    const height = 400;
-    const margin = { top: 40, right: 120, bottom: 50, left: 60 };
-    const innerWidth = width - margin.left - margin.right;
-    const innerHeight = height - margin.top - margin.bottom;
+  const selectedDistrictFeature = useMemo(() => {
+    if (!districtGeo || selectedDistrict === "All Districts") return null;
+    return (
+      districtGeo.features.find(
+        (f: any) => cleanName(getDistrictName(f)) === cleanName(selectedDistrict)
+      ) ?? null
+    );
+  }, [districtGeo, selectedDistrict]);
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove(); // Clear previous renders
+  const prevSelectedDistrictFeature = selectedDistrictFeature;
 
-    // Format data for D3
-    const data = points.map(p => ({
-      date: new Date(p.ts_utc),
-      rsrp: p.radio.rsrp_dbm,
-      sinr: p.radio.sinr_db
-    }));
+  const validPoints = useMemo(() => {
+    const base = points.filter(
+      (p) =>
+        p.lat !== null &&
+        p.lon !== null &&
+        p.rsrp_dbm !== null &&
+        !Number.isNaN(p.lat) &&
+        !Number.isNaN(p.lon)
+    );
+    if (!selectedDistrictFeature) return base;
+    return base.filter((p) =>
+      d3.geoContains(selectedDistrictFeature, [p.lon as number, p.lat as number])
+    );
+  }, [points, selectedDistrictFeature]);
 
-    // 2. Setup Scales
-    const xScale = d3.scaleTime()
-      .domain(d3.extent(data, d => d.date) as [Date, Date])
-      .range([0, innerWidth]);
+  const prevValidPoints = useMemo(() => {
+    const base = prevPoints.filter(
+      (p) =>
+        p.lat !== null &&
+        p.lon !== null &&
+        p.rsrp_dbm !== null &&
+        !Number.isNaN(p.lat) &&
+        !Number.isNaN(p.lon)
+    );
+    if (!prevSelectedDistrictFeature) return base;
+    return base.filter((p) =>
+      d3.geoContains(prevSelectedDistrictFeature, [p.lon as number, p.lat as number])
+    );
+  }, [prevPoints, prevSelectedDistrictFeature]);
 
-    const yScale = d3.scaleLinear()
-      .domain([
-        // Pad the min/max slightly for better chart visibility
-        d3.min(data, d => Math.min(d.rsrp, d.sinr))! - 5,
-        d3.max(data, d => Math.max(d.rsrp, d.sinr))! + 5
-      ])
-      .nice()
-      .range([innerHeight, 0]);
+  const avgRsrp = useMemo(() => summary?.avg_rsrp ?? null, [summary]);
+  const prevAvgRsrp = useMemo(() => prevSummary?.avg_rsrp ?? null, [prevSummary]);
+  const weakCoverage = useMemo(() => summary?.weak_coverage_percent ?? 0, [summary]);
+  const prevWeakCoverage = useMemo(
+    () => prevSummary?.weak_coverage_percent ?? 0,
+    [prevSummary]
+  );
 
-    const g = svg.append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
+  const districtStats: DistrictStat[] = useMemo(() => {
+    if (!districtGeo || !validPoints.length) return [];
 
-    // 3. Add Axes
-    const xAxis = d3.axisBottom(xScale).tickFormat(d3.timeFormat("%H:%M:%S") as any);
-    const yAxis = d3.axisLeft(yScale);
+    return districtGeo.features.map((feature: any) => {
+      const name = getDistrictName(feature);
+      const province = getProvinceName(feature);
 
-    g.append("g")
-      .attr("transform", `translate(0,${innerHeight})`)
-      .call(xAxis)
-      .selectAll("text")
-      .attr("transform", "rotate(-45)") // Rotate labels for fit
-      .style("text-anchor", "end");
+      const dPoints = validPoints.filter((p) =>
+        d3.geoContains(feature, [p.lon as number, p.lat as number])
+      );
 
-    g.append("g").call(yAxis);
+      const weak = dPoints.filter((p) => (p.rsrp_dbm ?? 0) <= threshold);
 
-    // 4. Line Generators
-    const rsrpLine = d3.line<typeof data[0]>()
-      .x(d => xScale(d.date))
-      .y(d => yScale(d.rsrp))
-      .curve(d3.curveMonotoneX); // Smooth curve
+      const rsrpSorted = dPoints
+        .map((p) => p.rsrp_dbm)
+        .filter((v): v is number => typeof v === "number")
+        .slice()
+        .sort((a, b) => a - b);
 
-    const sinrLine = d3.line<typeof data[0]>()
-      .x(d => xScale(d.date))
-      .y(d => yScale(d.sinr))
-      .curve(d3.curveMonotoneX);
+      const avg =
+        dPoints.length > 0
+          ? Math.round(
+              dPoints.reduce((sum, p) => sum + (p.rsrp_dbm ?? 0), 0) /
+                dPoints.length
+            )
+          : null;
 
-    // 5. Draw Lines
-    g.append("path")
-      .datum(data)
-      .attr("fill", "none")
-      .attr("stroke", "#3b82f6") // Blue
-      .attr("stroke-width", 2.5)
-      .attr("d", rsrpLine);
+      const median =
+        rsrpSorted.length === 0
+          ? null
+          : rsrpSorted.length % 2 === 1
+            ? rsrpSorted[(rsrpSorted.length - 1) / 2]
+            : Math.round(
+                (rsrpSorted[rsrpSorted.length / 2 - 1] +
+                  rsrpSorted[rsrpSorted.length / 2]) /
+                  2
+              );
 
-    g.append("path")
-      .datum(data)
-      .attr("fill", "none")
-      .attr("stroke", "#10b981") // Green
-      .attr("stroke-width", 2.5)
-      .attr("d", sinrLine);
+      return {
+        districtName: name,
+        province,
+        totalSamples: dPoints.length,
+        weakPercent: dPoints.length
+          ? Math.round((weak.length / dPoints.length) * 100)
+          : 0,
+        avgRsrp: avg,
+        medianRsrp: median,
+      };
+    });
+  }, [districtGeo, validPoints, threshold]);
 
-    // 6. Title & Legend
-    svg.append("text")
-      .attr("x", width / 2)
-      .attr("y", 20)
-      .attr("text-anchor", "middle")
-      .style("font-size", "16px")
-      .style("font-weight", "bold")
-      .text(`Ride ${runId} — 1 Hz Cellular Signal`);
+  const prevDistrictStats: DistrictStat[] = useMemo(() => {
+    if (!districtGeo || !prevValidPoints.length) return [];
 
-    const legend = svg.append("g")
-      .attr("transform", `translate(${width - margin.right + 20}, ${margin.top})`);
+    return districtGeo.features.map((feature: any) => {
+      const name = getDistrictName(feature);
+      const province = getProvinceName(feature);
 
-    // RSRP Legend
-    legend.append("rect").attr("x", 0).attr("y", 0).attr("width", 12).attr("height", 12).attr("fill", "#3b82f6");
-    legend.append("text").attr("x", 20).attr("y", 11).text("RSRP (dBm)").style("font-size", "12px");
+      const dPoints = prevValidPoints.filter((p) =>
+        d3.geoContains(feature, [p.lon as number, p.lat as number])
+      );
 
-    // SINR Legend
-    legend.append("rect").attr("x", 0).attr("y", 20).attr("width", 12).attr("height", 12).attr("fill", "#10b981");
-    legend.append("text").attr("x", 20).attr("y", 31).text("SINR (dB)").style("font-size", "12px");
+      const weak = dPoints.filter((p) => (p.rsrp_dbm ?? 0) <= threshold);
 
-  }, [points, runId]);
+      const rsrpSorted = dPoints
+        .map((p) => p.rsrp_dbm)
+        .filter((v): v is number => typeof v === "number")
+        .slice()
+        .sort((a, b) => a - b);
+
+      const avg =
+        dPoints.length > 0
+          ? Math.round(
+              dPoints.reduce((sum, p) => sum + (p.rsrp_dbm ?? 0), 0) /
+                dPoints.length
+            )
+          : null;
+
+      const median =
+        rsrpSorted.length === 0
+          ? null
+          : rsrpSorted.length % 2 === 1
+            ? rsrpSorted[(rsrpSorted.length - 1) / 2]
+            : Math.round(
+                (rsrpSorted[rsrpSorted.length / 2 - 1] +
+                  rsrpSorted[rsrpSorted.length / 2]) /
+                  2
+              );
+
+      return {
+        districtName: name,
+        province,
+        totalSamples: dPoints.length,
+        weakPercent: dPoints.length
+          ? Math.round((weak.length / dPoints.length) * 100)
+          : 0,
+        avgRsrp: avg,
+        medianRsrp: median,
+      };
+    });
+  }, [districtGeo, prevValidPoints, threshold]);
+
+  const activeDistricts = districtStats.filter((d) => d.totalSamples > 0);
+  const prevActiveDistricts = prevDistrictStats.filter((d) => d.totalSamples > 0);
+
+  const worstDistricts = [...activeDistricts]
+    .sort((a, b) => b.weakPercent - a.weakPercent)
+    .slice(0, 8);
+
+  const criticalDistricts = activeDistricts.filter(
+    (d) => d.weakPercent > 45
+  ).length;
+  const prevCriticalDistricts = prevActiveDistricts.filter(
+    (d) => d.weakPercent > 45
+  ).length;
+
+  const goodDistricts = activeDistricts.filter(
+    (d) => d.weakPercent <= 10
+  ).length;
+
+  const provinceSummary = useMemo(() => {
+    const groups: Record<string, DistrictStat[]> = {};
+
+    activeDistricts.forEach((d) => {
+      if (!groups[d.province]) groups[d.province] = [];
+      groups[d.province].push(d);
+    });
+
+    return Object.entries(groups).map(([province, districts]) => {
+      const avgWeak = Math.round(
+        districts.reduce((sum, d) => sum + d.weakPercent, 0) / districts.length
+      );
+
+      return {
+        province,
+        weakPercent: avgWeak,
+        districts: districts.length,
+      };
+    });
+  }, [activeDistricts]);
+
+  const liveCollection = useMemo(() => {
+    const run = runs.find((r) => r.run_id === selectedRunId);
+    return {
+      rigId: run?.vehicle_id || "NTRK-04",
+      route: run?.run_id ? `${run.run_id}` : "—",
+      samples: run?.point_count ?? points.length ?? 0,
+    };
+  }, [runs, selectedRunId, points.length]);
+
+  const deltas = useMemo(() => {
+    const avgDelta =
+      avgRsrp !== null && prevAvgRsrp !== null ? avgRsrp - prevAvgRsrp : null;
+    const weakDelta =
+      typeof weakCoverage === "number" && typeof prevWeakCoverage === "number"
+        ? weakCoverage - prevWeakCoverage
+        : null;
+    const criticalDelta =
+      typeof criticalDistricts === "number" && typeof prevCriticalDistricts === "number"
+        ? criticalDistricts - prevCriticalDistricts
+        : null;
+
+    return { avgDelta, weakDelta, criticalDelta };
+  }, [avgRsrp, prevAvgRsrp, weakCoverage, prevWeakCoverage, criticalDistricts, prevCriticalDistricts]);
+
+  const deltaBadge = (value: number | null, suffix: string) => {
+    if (value === null) return null;
+    const sign = value > 0 ? "▲" : value < 0 ? "▼" : "•";
+    const cls = value > 0 ? "delta up" : value < 0 ? "delta down" : "delta flat";
+    const abs = Math.abs(value);
+    const text =
+      suffix === "dBm"
+        ? `${sign} ${abs} ${suffix}`
+        : `${sign} ${abs}${suffix}`;
+    return <span className={cls}>{text}</span>;
+  };
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'system-ui' }}>
-      <h1>Cellular Signal Dashboard</h1>
-      <button onClick={seedData} style={{ padding: '10px 20px', marginBottom: '20px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-        🔄 Generate New Dummy Ride (100 points)
-      </button>
+    <div className="nt-shell">
+      <aside className="nt-sidebar">
+        <div className="nt-brand">
+          <div className="nt-brand-mark">
+            <img src={logo} alt="NETRACK" />
+          </div>
+          <div className="nt-brand-text">
+            <div className="nt-brand-name">NETRACK</div>
+            <div className="nt-brand-sub">IoT Analytics</div>
+          </div>
+        </div>
 
-      <div style={{ marginBottom: '40px', overflowX: 'auto' }}>
-        <h2>RSRP / SINR Chart (1 Hz)</h2>
-        {/* D3 hooks into this SVG element */}
-        <svg ref={svgRef} width="900" height="400" style={{ background: '#f8fafc', borderRadius: '8px' }}></svg>
-      </div>
+        <nav className="nt-nav">
+          <button className="nt-nav-item active" type="button">
+            <span className="nt-nav-icon" aria-hidden />
+            <span>Overview</span>
+          </button>
+          <button className="nt-nav-item" type="button">
+            <span className="nt-nav-icon" aria-hidden />
+            <span>Route Analysis</span>
+          </button>
+          <button className="nt-nav-item" type="button">
+            <span className="nt-nav-icon" aria-hidden />
+            <span>MNO Benchmark</span>
+          </button>
+          <button className="nt-nav-item" type="button">
+            <span className="nt-nav-icon" aria-hidden />
+            <span>Rig Health</span>
+          </button>
+          <button className="nt-nav-item" type="button">
+            <span className="nt-nav-icon" aria-hidden />
+            <span>Data Table</span>
+          </button>
+        </nav>
 
-      <h2>Raw Data (last 10 points)</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-        <thead>
-          <tr style={{ background: '#f1f5f9' }}>
-            <th style={{ padding: '8px', border: '1px solid #ddd' }}>Time</th>
-            <th style={{ padding: '8px', border: '1px solid #ddd' }}>RSRP</th>
-            <th style={{ padding: '8px', border: '1px solid #ddd' }}>SINR</th>
-            <th style={{ padding: '8px', border: '1px solid #ddd' }}>Lat / Lon</th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.slice(-10).map((p, i) => (
-            <tr key={i}>
-              <td style={{ padding: '8px', border: '1px solid #ddd' }}>{new Date(p.ts_utc).toLocaleTimeString()}</td>
-              <td style={{ padding: '8px', border: '1px solid #ddd' }}>{p.radio.rsrp_dbm} dBm</td>
-              <td style={{ padding: '8px', border: '1px solid #ddd' }}>{p.radio.sinr_db} dB</td>
-              <td style={{ padding: '8px', border: '1px solid #ddd' }}>{p.gps.lat.toFixed(4)}, {p.gps.lon.toFixed(4)}</td>
-            </tr>
+        <div className="nt-live">
+          <div className="nt-live-dot" aria-hidden />
+          <div className="nt-live-meta">
+            <div className="nt-live-title">Live Collection</div>
+            <div className="nt-live-row">
+              <span>Rig ID:</span>
+              <strong>{liveCollection.rigId}</strong>
+            </div>
+            <div className="nt-live-row">
+              <span>Route:</span>
+              <strong>{liveCollection.route}</strong>
+            </div>
+            <div className="nt-live-row">
+              <span>Samples:</span>
+              <strong>{liveCollection.samples.toLocaleString()}</strong>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="nt-main">
+        <header className="nt-topbar">
+          <div className="nt-topbar-title">
+            <div className="nt-topbar-eyebrow">NETWORK DRIVE TESTING DASHBOARD</div>
+          </div>
+
+          <div className="nt-topbar-actions">
+            <select
+              className="nt-pill"
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as DateRangeId)}
+              aria-label="Date range"
+            >
+              <option value="24h">Last 24 Hours</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="all">All Time</option>
+            </select>
+
+            <button className="nt-iconbtn" type="button" onClick={fetchDashboardData} aria-label="Refresh">
+              {loading ? "…" : "⟳"}
+            </button>
+
+            <button className="nt-iconbtn" type="button" aria-label="Notifications">
+              ◌
+            </button>
+
+            <div className="nt-userpill" aria-label="User">
+              <div className="nt-user-avatar" aria-hidden />
+              <div className="nt-user-meta">
+                <div className="nt-user-name">Engineer</div>
+                <div className="nt-user-role">Analyst</div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section className="nt-filters">
+          <div className="nt-filter">
+            <label>DISTRICT</label>
+            <select
+              className="nt-pill"
+              value={selectedDistrict}
+              onChange={(e) => setSelectedDistrict(e.target.value)}
+              aria-label="District"
+              disabled={!districtGeo}
+            >
+              <option>All Districts</option>
+              {(districtGeo?.features ?? [])
+                .map((f: any) => getDistrictName(f))
+                .sort((a: string, b: string) => a.localeCompare(b))
+                .map((name: string) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div className="nt-filter">
+            <label>MNO</label>
+            <div className="nt-mno">
+              <button
+                className={`mno dialog ${selectedOperator === "Dialog" ? "active" : ""}`}
+                onClick={() => setSelectedOperator((v) => (v === "Dialog" ? null : "Dialog"))}
+                aria-pressed={selectedOperator === "Dialog"}
+                type="button"
+              >
+                Dialog
+              </button>
+              <button
+                className={`mno mobitel ${selectedOperator === "Mobitel" ? "active" : ""}`}
+                onClick={() => setSelectedOperator((v) => (v === "Mobitel" ? null : "Mobitel"))}
+                aria-pressed={selectedOperator === "Mobitel"}
+                type="button"
+              >
+                Mobitel
+              </button>
+              <button
+                className={`mno airtel ${selectedOperator === "Airtel" ? "active" : ""}`}
+                onClick={() => setSelectedOperator((v) => (v === "Airtel" ? null : "Airtel"))}
+                aria-pressed={selectedOperator === "Airtel"}
+                type="button"
+              >
+                Airtel
+              </button>
+              <button
+                className={`mno hutch ${selectedOperator === "Hutch" ? "active" : ""}`}
+                onClick={() => setSelectedOperator((v) => (v === "Hutch" ? null : "Hutch"))}
+                aria-pressed={selectedOperator === "Hutch"}
+                type="button"
+              >
+                Hutch
+              </button>
+            </div>
+          </div>
+
+          <div className="nt-filter grow">
+            <label>THRESHOLD</label>
+            <div className="nt-threshold">
+              <input
+                type="range"
+                min="-125"
+                max="-80"
+                value={threshold}
+                onChange={(e) => setThreshold(Number(e.target.value))}
+                aria-label="Threshold"
+              />
+              <div className="nt-threshold-val">{threshold} dBm</div>
+              <button
+                className="nt-pill"
+                type="button"
+                onClick={() => {
+                  setSelectedDistrict("All Districts");
+                  setSelectedOperator(null);
+                  setThreshold(-110);
+                  setDateRange("7d");
+                }}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          <div className="nt-filter">
+            <label>RUN</label>
+            <select
+              className="nt-pill"
+              value={selectedRunId}
+              onChange={(e) => setSelectedRunId(e.target.value)}
+              aria-label="Run"
+            >
+              {runs.length ? (
+                runs.map((r) => (
+                  <option key={r.run_id} value={r.run_id}>
+                    {r.run_id}
+                  </option>
+                ))
+              ) : (
+                <option value="">No runs found</option>
+              )}
+            </select>
+          </div>
+        </section>
+
+        {apiError && <div className="error-card">API Error: {apiError}</div>}
+        {geoError && <div className="error-card">Map Error: {geoError}</div>}
+
+        <section className="kpi-grid">
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <p>TOTAL DISTRICTS</p>
+              <span className="kpi-icon" aria-hidden>▦</span>
+            </div>
+            <h2>{districtGeo?.features?.length ?? 0}</h2>
+            <small>Sri Lanka coverage</small>
+            <div className="kpi-foot">
+              <span className="delta up">▲ 0 vs last week</span>
+            </div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <p>AVG RSRP</p>
+              <span className="kpi-icon" aria-hidden>≋</span>
+            </div>
+            <h2 className="yellow">{avgRsrp ?? "N/A"} dBm</h2>
+            <small>National average</small>
+            <div className="kpi-foot">
+              {deltaBadge(deltas.avgDelta, "dBm")}
+              <span className="kpi-foot-label">vs last week</span>
+            </div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <p>% WEAK COVERAGE</p>
+              <span className="kpi-icon warn" aria-hidden>△</span>
+            </div>
+            <h2 className="orange">{weakCoverage}%</h2>
+            <small>&lt; {threshold} dBm threshold</small>
+            <div className="kpi-foot">
+              {deltaBadge(deltas.weakDelta, "%")}
+              <span className="kpi-foot-label">vs last week</span>
+            </div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-head">
+              <p>DISTRICTS BELOW THRESHOLD</p>
+              <span className="kpi-icon bad" aria-hidden>▮</span>
+            </div>
+            <h2 className="red">{criticalDistricts}</h2>
+            <small>Require intervention</small>
+            <div className="kpi-foot">
+              {deltaBadge(deltas.criticalDelta, "")}
+              <span className="kpi-foot-label">vs last week</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="map-card">
+          <div className="section-title">
+            <div>
+              <h2>District Coverage Choropleth</h2>
+              <p>RSRP weakness by district — click or hover to inspect</p>
+            </div>
+
+            <div className="legend">
+              <span><i className="dot excellent"></i>Excellent</span>
+              <span><i className="dot good"></i>Good</span>
+              <span><i className="dot fair"></i>Fair</span>
+              <span><i className="dot poor"></i>Poor</span>
+            </div>
+          </div>
+
+          <div className="map-layout">
+            <div className="sl-map-wrapper">
+              {districtGeo ? (
+                <SriLankaChoropleth
+                  geoJson={districtGeo}
+                  districtStats={districtStats}
+                  onSelectDistrict={(name) => setSelectedDistrict(name)}
+                />
+              ) : (
+                <p>Loading map...</p>
+              )}
+            </div>
+
+            <aside className="map-side">
+              <h3>WEAK % SCALE</h3>
+              <p><i className="dot excellent"></i>&lt; 10%</p>
+              <p><i className="dot good"></i>10–25%</p>
+              <p><i className="dot fair"></i>25–45%</p>
+              <p><i className="dot poor"></i>&gt; 45%</p>
+
+              <h3>QUICK JUMP</h3>
+              {worstDistricts.slice(0, 5).map((d) => (
+                <div className="quick-row" key={d.districtName}>
+                  <span>{d.districtName}</span>
+                  <strong>{d.weakPercent}%</strong>
+                </div>
+              ))}
+            </aside>
+          </div>
+        </section>
+
+        <section className="ranking-card">
+          <div className="section-title">
+            <h2>Worst Districts Ranking</h2>
+            <p>By % weak RSRP</p>
+          </div>
+
+          <div className="rank-header">
+            <span>#</span>
+            <span>District</span>
+            <span>% Weak</span>
+            <span>Median RSRP</span>
+            <span></span>
+          </div>
+
+          {worstDistricts.map((d, index) => (
+            <div className="rank-row" key={d.districtName}>
+              <span>{index + 1}</span>
+              <strong>
+                <i className="dot poor"></i>
+                {d.districtName}
+                <small>{d.province}</small>
+              </strong>
+              <div className="rank-weak">
+                <em>{d.weakPercent}%</em>
+                <div className="rank-bar" aria-hidden>
+                  <div className="rank-bar-fill" style={{ width: `${Math.min(100, Math.max(0, d.weakPercent))}%` }} />
+                </div>
+              </div>
+              <span className="rank-median">{d.medianRsrp ?? "N/A"} dBm</span>
+              <button className="rank-view" type="button" onClick={() => setSelectedDistrict(d.districtName)}>
+                View
+              </button>
+            </div>
           ))}
-        </tbody>
-      </table>
 
-      <p style={{ marginTop: '30px', fontSize: '0.9rem', color: '#64748b' }}>
-        Backend → MongoDB Atlas (cloud) • Data ingested at 1 Hz • Ride = run_id object
-      </p>
+          <div className="summary-strip">
+            <div>
+              <strong className="green">{goodDistricts}</strong>
+              <span>Good Coverage</span>
+            </div>
+            <div>
+              <strong className="red-text">{criticalDistricts}</strong>
+              <span>Critical Districts</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="province-card">
+          <h2>Province-Level Summary</h2>
+
+          <div className="province-grid">
+            {provinceSummary.map((p) => (
+              <div className="province-box" key={p.province}>
+                <span>{p.province}</span>
+                <strong>{p.weakPercent}%</strong>
+                <small>weak</small>
+                <small>{p.districts} dist.</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
-export default App;
