@@ -1,24 +1,18 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
+from typing import Any
 import json
 import os
 import random
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from src.schemas.telemetry import (
-    TelemetryPoint,
-    Meta,
-    Radio,
-    Gps,
-    Env,
-    Ingest,
-)
+from src.schemas.telemetry import TelemetryPoint
 
 load_dotenv()
 
@@ -30,25 +24,19 @@ PHONE_DATA_FILE = DATA_DIR / "phone_radio_data.jsonl"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    uri = os.getenv("MONGODB_URI")
-    if not uri:
-        raise ValueError(
-            "Missing MONGODB_URI. Create a .env in apps/backend with MONGODB_URI=<your connection string>."
-        )
+    uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 
     app.state.client = AsyncIOMotorClient(uri)
     app.state.db = app.state.client["cellular_signal_db"]
     app.state.collection = app.state.db["telemetry_points"]
 
     await app.state.collection.create_index("meta.run_id")
-    await app.state.collection.create_index("meta.operator")
+    await app.state.collection.create_index("district")
+    await app.state.collection.create_index("province")
     await app.state.collection.create_index("ts_utc")
-    await app.state.collection.create_index([("meta.run_id", 1), ("ts_utc", 1)])
     await app.state.collection.create_index([("location", "2dsphere")])
 
-    parsed = urlparse(uri)
-    host = parsed.hostname or "unknown-host"
-    print(f"Connected to MongoDB ({parsed.scheme}://{host}) + indexes created")
+    print("Connected to MongoDB + indexes created")
 
     yield
 
@@ -67,6 +55,139 @@ app.add_middleware(
 )
 
 
+def parse_iso_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def serialize_datetime(value: Any):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def clean_district_name(value: str | None):
+    if not value:
+        return "Unknown"
+    return value.replace(" District", "").strip()
+
+
+def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
+    points = []
+
+    doc_id = str(doc.get("_id"))
+    ts_utc = serialize_datetime(doc.get("ts_utc"))
+
+    meta = doc.get("meta", {}) or {}
+    gps = doc.get("gps", {}) or {}
+
+    lat = gps.get("lat")
+    lon = gps.get("lon")
+
+    district = clean_district_name(
+        doc.get("district") or doc.get("ingest", {}).get("district")
+    )
+
+    province = doc.get("province") or doc.get("ingest", {}).get("province") or "Sri Lanka"
+
+    run_id = meta.get("run_id")
+    vehicle_id = meta.get("vehicle_id")
+    phone_id = meta.get("phone_id")
+    rat = meta.get("rat")
+
+    operators = doc.get("operators")
+
+    if isinstance(operators, dict) and operators:
+        for operator_name, signal in operators.items():
+            if selected_operator and operator_name != selected_operator:
+                continue
+
+            signal = signal or {}
+
+            points.append(
+                {
+                    "id": f"{doc_id}_{operator_name}",
+                    "source_id": doc_id,
+                    "ts_utc": ts_utc,
+                    "run_id": run_id,
+                    "vehicle_id": vehicle_id,
+                    "phone_id": phone_id,
+                    "operator": operator_name,
+                    "rat": rat,
+                    "rsrp_dbm": signal.get("rsrp_dbm"),
+                    "rsrq_db": signal.get("rsrq_db"),
+                    "sinr_db": signal.get("sinr_db"),
+                    "cell_id": signal.get("cell_id"),
+                    "pci": signal.get("pci"),
+                    "earfcn": signal.get("earfcn"),
+                    "band": signal.get("band"),
+                    "lat": lat,
+                    "lon": lon,
+                    "district": district,
+                    "province": province,
+                }
+            )
+
+        return points
+
+    radio = doc.get("radio", {}) or {}
+    operator_name = meta.get("operator", "Unknown")
+
+    if selected_operator and operator_name != selected_operator:
+        return []
+
+    points.append(
+        {
+            "id": doc_id,
+            "source_id": doc_id,
+            "ts_utc": ts_utc,
+            "run_id": run_id,
+            "vehicle_id": vehicle_id,
+            "phone_id": phone_id,
+            "operator": operator_name,
+            "rat": rat,
+            "rsrp_dbm": radio.get("rsrp_dbm"),
+            "rsrq_db": radio.get("rsrq_db"),
+            "sinr_db": radio.get("sinr_db"),
+            "cell_id": radio.get("cell_id"),
+            "pci": radio.get("pci"),
+            "earfcn": radio.get("earfcn"),
+            "band": radio.get("band"),
+            "lat": lat,
+            "lon": lon,
+            "district": district,
+            "province": province,
+        }
+    )
+
+    return points
+
+
+def build_base_query(
+    run_id: str | None,
+    district: str | None,
+    start_ts: str | None,
+    end_ts: str | None,
+):
+    query: dict[str, Any] = {}
+
+    if run_id:
+        query["meta.run_id"] = run_id
+
+    if district and district != "All Districts":
+        query["district"] = district
+
+    if start_ts or end_ts:
+        query["ts_utc"] = {}
+
+        if start_ts:
+            query["ts_utc"]["$gte"] = parse_iso_datetime(start_ts)
+
+        if end_ts:
+            query["ts_utc"]["$lte"] = parse_iso_datetime(end_ts)
+
+    return query
+
+
 @app.get("/")
 async def root():
     return {"message": "API is running"}
@@ -76,14 +197,10 @@ async def root():
 async def health():
     try:
         await app.state.db.command("ping")
-        uri = os.getenv("MONGODB_URI", "")
-        parsed = urlparse(uri) if uri else None
         return {
             "status": "ok",
             "mongo": "connected",
             "message": "Backend is running - DB running - all good",
-            "mongo_host": (parsed.hostname if parsed else None),
-            "mongo_db": "cellular_signal_db",
         }
     except Exception as e:
         return {"status": "error", "mongo": str(e)}
@@ -108,146 +225,184 @@ async def ingest_telemetry(point: TelemetryPoint):
 
 @app.get("/api/telemetry")
 async def get_telemetry(
-    run_id: str | None = Query(None, description="Filter by ride/run_id"),
-    operator: str | None = Query(None, description="Filter by operator/MNO"),
-    start_ts: datetime | None = Query(None, description="Start timestamp (ISO8601)"),
-    end_ts: datetime | None = Query(None, description="End timestamp (ISO8601)"),
-    limit: int = Query(500, le=1000),
+    run_id: str | None = Query(None),
+    limit: int = Query(500, le=5000),
     skip: int = 0,
 ):
-    query: dict = {}
+    query = {}
+
     if run_id:
         query["meta.run_id"] = run_id
-    if operator:
-        query["meta.operator"] = operator
-    if start_ts or end_ts:
-        time_q: dict = {}
-        if start_ts:
-            time_q["$gte"] = start_ts
-        if end_ts:
-            time_q["$lte"] = end_ts
-        query["ts_utc"] = time_q
 
     cursor = (
-        app.state.collection
-        .find(query)
+        app.state.collection.find(query)
         .sort("ts_utc", 1)
         .skip(skip)
         .limit(limit)
     )
 
-    points = await cursor.to_list(length=limit)
+    docs = await cursor.to_list(length=limit)
 
-    for p in points:
-        p["_id"] = str(p["_id"])
-        p.pop("location", None)
+    for doc in docs:
+        doc["_id"] = str(doc["_id"])
+        doc.pop("location", None)
 
-    return points
+    return docs
 
 
 @app.get("/api/dashboard/summary")
-async def get_summary(
-    run_id: str | None = Query(None, description="Filter by ride/run_id"),
-    operator: str | None = Query(None, description="Filter by operator/MNO"),
-    district: str | None = Query(None, description="Filter by district name"),
-    start_ts: datetime | None = Query(None, description="Start timestamp (ISO8601)"),
-    end_ts: datetime | None = Query(None, description="End timestamp (ISO8601)"),
-    threshold: int = Query(-110, description="Weak RSRP threshold (dBm)"),
-    limit: int = Query(5000, le=20000),
+async def get_dashboard_summary(
+    run_id: str | None = Query(None),
+    operator: str | None = Query(None),
+    district: str | None = Query(None),
+    threshold: int = Query(-110),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+    scan_limit: int = Query(100000, le=200000),
 ):
-    query: dict = {}
-    if run_id:
-        query["meta.run_id"] = run_id
-    if operator:
-        # Schema stores measurements under operators.<OperatorName>.*
-        query[f"operators.{operator}.rsrp_dbm"] = {"$exists": True}
-    if district:
-        query["district"] = district
-    if start_ts or end_ts:
-        time_q: dict = {}
-        if start_ts:
-            time_q["$gte"] = start_ts
-        if end_ts:
-            time_q["$lte"] = end_ts
-        query["ts_utc"] = time_q
+    query = build_base_query(run_id, district, start_ts, end_ts)
 
     projection = {
         "ts_utc": 1,
-        "meta.operator": 1,
+        "meta": 1,
+        "radio": 1,
         "operators": 1,
-        "district": 1,
-        "province": 1,
         "gps.lat": 1,
         "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
     }
 
     cursor = (
-        app.state.collection
-        .find(query, projection)
+        app.state.collection.find(query, projection)
         .sort("ts_utc", 1)
-        .hint([("ts_utc", 1)])
+        .limit(scan_limit)
     )
-    docs = await cursor.to_list(length=limit)
 
-    points = []
-    rsrp_vals = []
-    weak_count = 0
-    critical_count = 0
+    docs = await cursor.to_list(length=scan_limit)
 
-    def pick_operator_radio(doc: dict, requested: str | None) -> tuple[str, dict]:
-        ops = doc.get("operators") or {}
-        if isinstance(ops, dict):
-            if requested and requested in ops and isinstance(ops[requested], dict):
-                return requested, ops[requested]
-            # prefer Dialog if present, else first available operator
-            if "Dialog" in ops and isinstance(ops["Dialog"], dict):
-                return "Dialog", ops["Dialog"]
-            for k, v in ops.items():
-                if isinstance(v, dict):
-                    return str(k), v
-        return (requested or doc.get("meta", {}).get("operator") or "Unknown"), {}
+    all_points = []
 
-    for d in docs:
-        gps = d.get("gps", {})
-        meta = d.get("meta", {})
-        op_name, radio = pick_operator_radio(d, operator)
+    for doc in docs:
+        all_points.extend(flatten_doc_to_points(doc, selected_operator=operator))
 
-        rsrp = radio.get("rsrp_dbm")
-        sinr = radio.get("sinr_db")
-        lat = gps.get("lat")
-        lon = gps.get("lon")
+    valid_points = [
+        p
+        for p in all_points
+        if isinstance(p.get("rsrp_dbm"), (int, float))
+    ]
 
-        if rsrp is not None:
-            rsrp_vals.append(rsrp)
+    rsrp_vals = [p["rsrp_dbm"] for p in valid_points]
 
-            if rsrp <= threshold:
-                weak_count += 1
+    weak_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= threshold)
+    critical_count = sum(1 for p in valid_points if p["rsrp_dbm"] <= -120)
 
-            if rsrp <= (threshold - 10):
-                critical_count += 1
+    total = len(valid_points)
 
-        points.append({
-            "id": str(d.get("_id")),
-            "ts_utc": d.get("ts_utc").isoformat() if d.get("ts_utc") else None,
-            "operator": op_name or meta.get("operator", "Unknown"),
-            "rsrp_dbm": rsrp,
-            "sinr_db": sinr,
-            "lat": lat,
-            "lon": lon,
-        })
+    grouped: dict[str, dict[str, Any]] = {}
 
-    total = len(docs)
+    for p in valid_points:
+        district_name = clean_district_name(p.get("district"))
+        province_name = p.get("province") or "Sri Lanka"
+
+        if district_name not in grouped:
+            grouped[district_name] = {
+                "districtName": district_name,
+                "province": province_name,
+                "values": [],
+            }
+
+        grouped[district_name]["values"].append(p["rsrp_dbm"])
+
+    district_stats = []
+
+    for district_name, data in grouped.items():
+        values = data["values"]
+        total_samples = len(values)
+        district_weak = sum(1 for v in values if v <= threshold)
+
+        district_stats.append(
+            {
+                "districtName": district_name,
+                "province": data["province"],
+                "totalSamples": total_samples,
+                "weakPercent": round((district_weak / total_samples) * 100)
+                if total_samples
+                else 0,
+                "avgRsrp": round(sum(values) / total_samples)
+                if total_samples
+                else None,
+                "medianRsrp": round(median(values)) if values else None,
+            }
+        )
+
+    district_stats.sort(key=lambda d: d["weakPercent"], reverse=True)
 
     return {
         "run_id": run_id,
         "operator": operator,
+        "district": district,
         "threshold": threshold,
         "total_samples": total,
-        "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1) if rsrp_vals else None,
-        "weak_coverage_percent": round((weak_count / total) * 100, 1) if total else 0,
+        "avg_rsrp": round(sum(rsrp_vals) / len(rsrp_vals), 1)
+        if rsrp_vals
+        else None,
+        "weak_coverage_percent": round((weak_count / total) * 100, 1)
+        if total
+        else 0,
         "critical_count": critical_count,
-        "points": points,
+        "district_stats": district_stats,
     }
+
+
+@app.get("/api/dashboard/points")
+async def get_dashboard_points(
+    run_id: str | None = Query(None),
+    operator: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+    limit: int = Query(3000, le=10000),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(limit)
+    )
+
+    docs = await cursor.to_list(length=limit)
+
+    points = []
+
+    for doc in docs:
+        points.extend(flatten_doc_to_points(doc, selected_operator=operator))
+
+    valid_points = [
+        p
+        for p in points
+        if isinstance(p.get("lat"), (int, float))
+        and isinstance(p.get("lon"), (int, float))
+        and isinstance(p.get("rsrp_dbm"), (int, float))
+    ]
+
+    return valid_points[:limit]
 
 
 @app.get("/api/runs")
@@ -257,10 +412,11 @@ async def get_runs():
             "$group": {
                 "_id": "$meta.run_id",
                 "vehicle_id": {"$first": "$meta.vehicle_id"},
-                "operator": {"$first": "$meta.operator"},
                 "start_time": {"$min": "$ts_utc"},
                 "end_time": {"$max": "$ts_utc"},
                 "point_count": {"$sum": 1},
+                "district": {"$first": "$district"},
+                "province": {"$first": "$province"},
             }
         },
         {"$sort": {"start_time": -1}},
@@ -269,80 +425,127 @@ async def get_runs():
     cursor = app.state.collection.aggregate(pipeline)
     runs = await cursor.to_list(length=None)
 
-    for run in runs:
-        run["run_id"] = run.pop("_id")
+    cleaned = []
 
-    return runs
+    for run in runs:
+        run_id = run.pop("_id", None)
+
+        if not run_id:
+            continue
+
+        cleaned.append(
+            {
+                "run_id": run_id,
+                "vehicle_id": run.get("vehicle_id"),
+                "start_time": serialize_datetime(run.get("start_time")),
+                "end_time": serialize_datetime(run.get("end_time")),
+                "point_count": run.get("point_count", 0),
+                "district": run.get("district"),
+                "province": run.get("province"),
+            }
+        )
+
+    return cleaned
+
+
+@app.get("/api/operators")
+async def get_operators():
+    pipeline = [
+        {"$project": {"operator_names": {"$objectToArray": "$operators"}}},
+        {"$unwind": "$operator_names"},
+        {"$group": {"_id": "$operator_names.k"}},
+        {"$sort": {"_id": 1}},
+    ]
+
+    cursor = app.state.collection.aggregate(pipeline)
+    rows = await cursor.to_list(length=None)
+
+    return [row["_id"] for row in rows]
 
 
 @app.post("/api/seed")
 async def seed_dummy_data(
-    num_points: int = Query(1000, description="Number of points to generate"),
+    num_points: int = Query(1000),
     run_id: str = Query("run_test_001"),
 ):
-    operators = ["Dialog", "Mobitel", "Hutch"]
+    operators = ["Dialog", "Mobitel", "Hutch", "Airtel"]
     base_time = datetime.now(timezone.utc) - timedelta(minutes=10)
 
     start_lat, start_lon = 6.9271, 79.8612
-    points = []
+    docs = []
+
+    districts = [
+        ("Colombo", "Western"),
+        ("Gampaha", "Western"),
+        ("Kalutara", "Western"),
+        ("Kandy", "Central"),
+        ("Galle", "Southern"),
+    ]
 
     for i in range(num_points):
         ts = base_time + timedelta(seconds=i)
-        lat = start_lat + random.uniform(-0.15, 0.15)
-        lon = start_lon + random.uniform(-0.10, 0.10)
 
-        operator = random.choice(operators)
+        district_name, province_name = random.choice(districts)
 
-        point = TelemetryPoint(
-            ts_utc=ts,
-            meta=Meta(
-                run_id=run_id,
-                vehicle_id="veh_01",
-                phone_id="a53_01",
-                operator=operator,
-                rat="LTE",
-            ),
-            radio=Radio(
-                rsrp_dbm=random.randint(-120, -70),
-                rsrq_db=random.randint(-18, -8),
-                sinr_db=random.randint(-5, 20),
-                cell_id="41322109",
-                pci=112,
-                earfcn=1650,
-                band="B3",
-            ),
-            gps=Gps(
-                lat=round(lat, 6),
-                lon=round(lon, 6),
-                alt_m=round(17.4 + random.uniform(-10, 10), 1),
-                speed_mps=round(11.2 + random.uniform(-5, 5), 1),
-                heading_deg=182.5,
-                fix_quality=1,
-                satellites=14,
-                gps_ts=ts,
-            ),
-            env=Env(
-                light_lux=round(random.uniform(5, 80), 1),
-                temp_c=round(random.uniform(35, 45), 1),
-                shade_flag=random.choice([True, False]),
-                humidity=round(random.uniform(78, 90), 1),
-            ),
-            ingest=Ingest(
-                pi_id="pi_gateway_01",
-                phone_seq=10000 + i,
-                received_at=ts + timedelta(milliseconds=300),
-            ),
-        )
+        lat = round(start_lat + random.uniform(-0.3, 0.3), 6)
+        lon = round(start_lon + random.uniform(-0.3, 0.3), 6)
 
-        doc = point.model_dump()
-        doc["location"] = {
-            "type": "Point",
-            "coordinates": [point.gps.lon, point.gps.lat],
+        operators_payload = {}
+
+        for operator_name in operators:
+            operators_payload[operator_name] = {
+                "rsrp_dbm": random.randint(-120, -65),
+                "rsrq_db": random.randint(-18, -6),
+                "sinr_db": random.randint(-5, 25),
+                "cell_id": str(random.randint(41000000, 41999999)),
+                "pci": random.randint(1, 500),
+                "earfcn": random.choice([1650, 2300, 6200]),
+                "band": random.choice(["B1", "B3", "B8"]),
+            }
+
+        doc = {
+            "ts_utc": ts,
+            "meta": {
+                "run_id": run_id,
+                "vehicle_id": "veh_01",
+                "phone_id": "multi_operator_a53_01",
+                "rat": "LTE",
+            },
+            "gps": {
+                "lat": lat,
+                "lon": lon,
+                "alt_m": round(17.4 + random.uniform(-10, 10), 1),
+                "speed_mps": round(11.2 + random.uniform(-5, 5), 1),
+                "heading_deg": round(random.uniform(0, 360), 1),
+                "fix_quality": 1,
+                "satellites": random.randint(8, 16),
+                "gps_ts": ts,
+            },
+            "env": {
+                "light_lux": round(random.uniform(5, 80), 1),
+                "temp_c": round(random.uniform(28, 40), 1),
+                "shade_flag": random.choice([True, False]),
+                "humidity": round(random.uniform(65, 90), 1),
+            },
+            "ingest": {
+                "pi_id": "pi_gateway_01",
+                "phone_seq": 10000 + i,
+                "received_at": ts + timedelta(milliseconds=300),
+            },
+            "district": district_name,
+            "province": province_name,
+            "route_name": run_id,
+            "signal_quality_profile": "mixed",
+            "operators": operators_payload,
+            "location": {
+                "type": "Point",
+                "coordinates": [lon, lat],
+            },
         }
 
-        points.append(doc)
+        docs.append(doc)
 
-    result = await app.state.collection.insert_many(points)
+    result = await app.state.collection.insert_many(docs)
 
     return {
         "status": "seeded",
@@ -353,9 +556,7 @@ async def seed_dummy_data(
 
 @app.delete("/api/seed")
 async def clear_seed_data(run_id: str = Query("run_test_001")):
-    result = await app.state.collection.delete_many({
-        "meta.run_id": run_id,
-    })
+    result = await app.state.collection.delete_many({"meta.run_id": run_id})
 
     return {
         "status": "cleared",
@@ -398,21 +599,22 @@ async def websocket_phone_radio(websocket: WebSocket):
             with PHONE_DATA_FILE.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-            print("Received from phone:")
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
-            print("Saved to file")
-
-            await websocket.send_text(json.dumps({
-                "status": "received",
-                "seq": payload.get("seq"),
-                "message": "Data received successfully",
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "status": "received",
+                        "seq": payload.get("seq"),
+                        "message": "Data received successfully",
+                    }
+                )
+            )
 
     except WebSocketDisconnect:
         print("Phone disconnected")
 
     except Exception as e:
         print(f"WebSocket error: {e}")
+
         try:
             await websocket.close()
         except Exception:
