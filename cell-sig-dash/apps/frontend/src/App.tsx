@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
 import Layout from "./components/Layout";
+import RouteAnalysis from "./pages/RouteAnalysis";
 
 interface DashboardPoint {
   id: string;
@@ -75,6 +76,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
+  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis">(
+  "dashboard"
+  );
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [prevSummary, setPrevSummary] =
@@ -236,6 +240,29 @@ export default function App() {
     fetchDashboardData();
   }, [selectedRunId, selectedOperator, selectedDistrict, threshold, dateRange]);
 
+  useEffect(() => {
+  const handleSidebarClick = (event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    const clickedItem = target.closest("div");
+
+    const text = clickedItem?.textContent?.trim();
+
+    if (text?.includes("Route Analysis")) {
+      setCurrentPage("route-analysis");
+    }
+
+    if (text?.includes("Overview")) {
+      setCurrentPage("dashboard");
+    }
+  };
+
+  document.addEventListener("click", handleSidebarClick);
+
+  return () => {
+    document.removeEventListener("click", handleSidebarClick);
+  };
+}, []);
+
   const districtStats = summary?.district_stats ?? [];
 
   const activeDistricts = districtStats.filter((d) => d.totalSamples > 0);
@@ -303,11 +330,16 @@ export default function App() {
     criticalDelta: criticalDistricts - prevCriticalDistricts,
   };
 
+  if (currentPage === "route-analysis") {
+  return <RouteAnalysis />;
+}
+
   return (
     <Layout
       title="Network Drive Testing Dashboard"
       topbarRight={
         <>
+
           <select
             className="nt-pill"
             value={dateRange}
