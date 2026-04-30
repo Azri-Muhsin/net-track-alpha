@@ -1,32 +1,35 @@
-from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional 
+from typing import Dict, Optional
+from pydantic import BaseModel
+
 
 class Meta(BaseModel):
     run_id: str
     vehicle_id: str
     phone_id: str
-    operator: str
     rat: str
 
-class Radio(BaseModel):
+
+class OperatorSignal(BaseModel):
     rsrp_dbm: int
     rsrq_db: int
-    sinr_db: int 
+    sinr_db: int
     cell_id: str
     pci: int
     earfcn: int
     band: str
 
+
 class Gps(BaseModel):
     lat: float
     lon: float
-    alt_m: float 
+    alt_m: float
     speed_mps: float
     heading_deg: float
-    fix_quality: int 
-    satellites: int 
-    gps_ts: datetime 
+    fix_quality: int
+    satellites: int
+    gps_ts: datetime
+
 
 class Env(BaseModel):
     light_lux: float
@@ -34,16 +37,23 @@ class Env(BaseModel):
     shade_flag: bool
     humidity: float
 
+
 class Ingest(BaseModel):
     pi_id: str
     phone_seq: int
     received_at: datetime
 
+
 class TelemetryPoint(BaseModel):
     ts_utc: datetime
     meta: Meta
-    radio: Radio 
     gps: Gps
     env: Env
     ingest: Ingest
 
+    district: Optional[str] = None
+    province: Optional[str] = None
+    route_name: Optional[str] = None
+    signal_quality_profile: Optional[str] = None
+
+    operators: Dict[str, OperatorSignal]
