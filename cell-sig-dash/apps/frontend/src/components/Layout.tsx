@@ -1,19 +1,24 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+interface LayoutProps {
+  children: React.ReactNode;
+  title?: string;
+  topbarRight?: React.ReactNode;
+}
+
+export default function Layout({
+  children,
+  title = "Dashboard",
+  topbarRight,
+}: LayoutProps) {
   const { colors } = useTheme();
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       <Sidebar />
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-        }}
-      >
-        {/* Top Bar*/}
+
+      <div style={{ flex: 1, overflow: "auto" }}>
         <div
           style={{
             position: "sticky",
@@ -25,9 +30,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             zIndex: 100,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Dashboard</h2>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 16,
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
+              {title}
+            </h2>
+
             <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+              {topbarRight}
+
               <button
                 style={{
                   background: "transparent",
@@ -44,9 +61,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "transparent";
                 }}
+                type="button"
               >
                 🔔
               </button>
+
               <div
                 style={{
                   width: 32,
@@ -65,7 +84,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Main Content */}
         <div style={{ padding: "24px" }}>{children}</div>
       </div>
     </div>
