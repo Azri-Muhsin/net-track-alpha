@@ -2,7 +2,14 @@ import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
 
-export default function Sidebar() {
+type Page = "dashboard" | "route-analysis" | "rig-health";
+
+interface SidebarProps {
+  currentPage: Page;
+  onNavigate: (page: Page) => void;
+}
+
+export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const { theme, setTheme, colors } = useTheme();
   const [open, setOpen] = useState(true);
   const [mobile, setMobile] = useState(false);
@@ -21,13 +28,13 @@ export default function Sidebar() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  const menuItems = [
-    { icon: "🏠", label: "Overview", active: true },
-    { icon: "📊", label: "MNO Benchmark", active: false },
-    { icon: "🗺️", label: "Route Analysis", active: false },
-    { icon: "📈", label: "Data Table", active: false },
-    { icon: "⚙️", label: "Settings", active: false },
+  const menuItems: { icon: string; label: string; page: Page }[] = [
+    { icon: "🏠", label: "Overview", page: "dashboard" },
+    { icon: "🗺️", label: "Route Analysis", page: "route-analysis" },
+    { icon: "🌡️", label: "Rig Health", page: "rig-health" },
   ];
+
+  const disabledItems = ["MNO Benchmark", "Data Table", "Settings"];
 
   return (
     <>
@@ -138,35 +145,87 @@ export default function Sidebar() {
 
         {/* Navigation Items */}
         <div style={{ flex: 1, padding: "12px 0" }}>
-          {menuItems.map((item, idx) => (
+          {open && (
             <div
-              key={idx}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                opacity: 0.45,
+                padding: "4px 28px 10px",
+              }}
+            >
+              MAIN MENU
+            </div>
+          )}
+
+          {menuItems.map((item) => {
+            const active = currentPage === item.page;
+            return (
+              <div
+                key={item.page}
+                onClick={() => onNavigate(item.page)}
+                style={{
+                  padding: "12px 16px",
+                  margin: "4px 12px",
+                  borderRadius: 12,
+                  background: active ? colors.accent : "transparent",
+                  color: active ? "#fff" : colors.text,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  fontWeight: active ? 600 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = colors.cardHover;
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = "transparent";
+                }}
+              >
+                <span style={{ fontSize: 20, minWidth: 24, textAlign: "center" }}>
+                  {item.icon}
+                </span>
+                {open && <span>{item.label}</span>}
+              </div>
+            );
+          })}
+
+          {open && (
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                opacity: 0.45,
+                padding: "16px 28px 10px",
+              }}
+            >
+              COMING SOON
+            </div>
+          )}
+
+          {disabledItems.map((label) => (
+            <div
+              key={label}
               style={{
                 padding: "12px 16px",
                 margin: "4px 12px",
                 borderRadius: 12,
-                background: item.active ? colors.accent : "transparent",
-                color: item.active ? "#fff" : colors.text,
+                color: colors.text,
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                cursor: "pointer",
-                transition: "all 0.2s",
-                fontWeight: item.active ? 600 : 400,
-              }}
-              onMouseEnter={(e) => {
-                if (!item.active) {
-                  e.currentTarget.style.background = colors.cardHover;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!item.active) {
-                  e.currentTarget.style.background = "transparent";
-                }
+                opacity: 0.35,
+                cursor: "not-allowed",
               }}
             >
-              <span style={{ fontSize: 20 }}>{item.icon}</span>
-              {open && <span>{item.label}</span>}
+              <span style={{ fontSize: 20, minWidth: 24, textAlign: "center" }}>
+                {label === "MNO Benchmark" ? "📊" : label === "Data Table" ? "📈" : "⚙️"}
+              </span>
+              {open && <span>{label}</span>}
             </div>
           ))}
         </div>

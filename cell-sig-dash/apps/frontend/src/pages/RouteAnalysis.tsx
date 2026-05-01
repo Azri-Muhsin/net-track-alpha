@@ -7,6 +7,14 @@ const API_BASE_URL =
 
 const GEOJSON_PATH = "/sri_lanka_districts.geojson";
 
+type Page = "dashboard" | "route-analysis" | "rig-health";
+
+interface RouteAnalysisProps {
+  currentPage: Page;
+  onNavigate: (page: Page) => void;
+}
+
+
 interface RunSummary {
   run_id: string;
   vehicle_id?: string;
@@ -29,7 +37,7 @@ interface DashboardPoint {
   district?: string;
 }
 
-export default function RouteAnalysis() {
+export default function RouteAnalysis({ currentPage, onNavigate }: RouteAnalysisProps) {
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
@@ -117,8 +125,8 @@ export default function RouteAnalysis() {
       .filter((p) =>
         selectedOperators.length
           ? selectedOperators.some(
-              (op) => op.toLowerCase() === (p.operator ?? "").toLowerCase()
-            )
+            (op) => op.toLowerCase() === (p.operator ?? "").toLowerCase()
+          )
           : true
       )
       .filter((p) => {
@@ -210,7 +218,7 @@ export default function RouteAnalysis() {
   const selectedRun = runs.find((r) => r.run_id === selectedRunId);
 
   return (
-    <Layout title="Route Analysis">
+    <Layout title="Route Analysis" currentPage={currentPage} onNavigate={onNavigate}>
       <div className="route-page">
         <div className="nt-filters">
           <div className="nt-filter">
@@ -240,9 +248,8 @@ export default function RouteAnalysis() {
                   <button
                     key={op}
                     type="button"
-                    className={`mno ${op.toLowerCase()} ${
-                      selectedOperators.includes(op) ? "active" : ""
-                    }`}
+                    className={`mno ${op.toLowerCase()} ${selectedOperators.includes(op) ? "active" : ""
+                      }`}
                     onClick={() => toggleOperator(op)}
                   >
                     {op}
@@ -319,7 +326,7 @@ export default function RouteAnalysis() {
                   districtStats={[]}
                   points={filteredPoints}
                   selectedDistrict="All Districts"
-                  onSelectDistrict={() => {}}
+                  onSelectDistrict={() => { }}
                   showRoute={true}
                   autoFitToPoints={true}
                 />
