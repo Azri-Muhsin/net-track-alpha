@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
+import MnoDistrictMap from "./components/MnoDistrictMap";
+import HexMap from "./components/HexMap";
+import MnoComp from "./components/MnoComp";
+import Layout from "./components/Layout";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
@@ -97,6 +102,8 @@ export default function App() {
     useState<OperatorFilter>("all");
   const [selectedDistrict, setSelectedDistrict] = useState("all");
   const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+  const [hexbinOperator, setHexbinOperator] = useState("Dialog");
+  const [mnoOperator, setMnoOperator] = useState("Dialog");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -344,6 +351,379 @@ export default function App() {
   }
 
   return (
+    <Layout
+      title="Network Drive Testing Dashboard"
+      topbarRight={
+        <>
+
+          <select
+            className="nt-pill"
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value as DateRangeId)}
+          >
+            <option value="24h">Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="all">All Time</option>
+          </select>
+
+          <button className="nt-iconbtn" type="button" onClick={fetchDashboardData}>
+            {loading ? "…" : "⟳"}
+          </button>
+        </>
+      }
+    >
+      <section className="nt-filters">
+        <div className="nt-filter">
+          <label>DISTRICT</label>
+          <select
+            className="nt-pill"
+            value={selectedDistrict}
+            onChange={(e) => setSelectedDistrict(e.target.value)}
+            disabled={!districtGeo}
+          >
+            <option>All Districts</option>
+            {(districtGeo?.features ?? [])
+              .map((f: any) => getDistrictName(f))
+              .sort((a: string, b: string) => a.localeCompare(b))
+              .map((name: string) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </select>
+        </div>
+
+        <div className="nt-filter">
+          <label>MNO</label>
+          <div className="nt-mno">
+            {["Dialog", "Mobitel", "Hutch"].map((op) => (
+              <button
+                key={op}
+                className={`mno ${op.toLowerCase()} ${
+                  selectedOperator === op ? "active" : ""
+                }`}
+                onClick={() =>
+                  setSelectedOperator((v) => (v === op ? null : op))
+                }
+                type="button"
+              >
+                {op}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="nt-filter grow">
+          <label>THRESHOLD</label>
+          <div className="nt-threshold">
+            <input
+              type="range"
+              min="-125"
+              max="-80"
+              value={threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+            />
+
+            <div className="nt-threshold-val">{threshold} dBm</div>
+
+            <button
+              className="nt-pill"
+              type="button"
+              onClick={() => {
+                setSelectedDistrict("All Districts");
+                setSelectedOperator(null);
+                setThreshold(-110);
+                setDateRange("7d");
+              }}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <div className="nt-filter">
+          <label>RUN</label>
+          <select
+            className="nt-pill"
+            value={selectedRunId}
+            onChange={(e) => setSelectedRunId(e.target.value)}
+          >
+            <option value="">All Runs</option>
+
+            {runs.length ? (
+              runs.map((r) => (
+                <option key={r.run_id} value={r.run_id}>
+                  {r.run_id}
+                </option>
+              ))
+            ) : (
+              <option value="" disabled>
+                No runs found
+              </option>
+            )}
+          </select>
+        </div>
+      </section>
+
+      {apiError && <div className="error-card">API Error: {apiError}</div>}
+      {geoError && <div className="error-card">Map Error: {geoError}</div>}
+
+      <section className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-head">
+            <p>TOTAL DISTRICTS</p>
+            <span className="kpi-icon">▦</span>
+          </div>
+          <h2>{districtGeo?.features?.length ?? 0}</h2>
+          <small>Sri Lanka coverage</small>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-head">
+            <p>AVG RSRP</p>
+            <span className="kpi-icon">≋</span>
+          </div>
+          <h2 className="yellow">
+            {avgRsrp !== null ? avgRsrp : "N/A"} dBm
+          </h2>
+          <small>Selected average</small>
+          <div className="kpi-foot">
+            {deltaBadge(deltas.avgDelta, "dBm")}
+            <span className="kpi-foot-label">vs previous period</span>
+          </div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-head">
+            <p>% WEAK COVERAGE</p>
+            <span className="kpi-icon warn">△</span>
+          </div>
+          <h2 className="orange">{weakCoverage}%</h2>
+          <small>&lt;= {threshold} dBm threshold</small>
+          <div className="kpi-foot">
+            {deltaBadge(deltas.weakDelta, "%")}
+            <span className="kpi-foot-label">vs previous period</span>
+          </div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-head">
+            <p>DISTRICTS BELOW THRESHOLD</p>
+            <span className="kpi-icon bad">▮</span>
+          </div>
+          <h2 className="red">{criticalDistricts}</h2>
+          <small>Require intervention</small>
+          <div className="kpi-foot">
+            {deltaBadge(deltas.criticalDelta, "")}
+            <span className="kpi-foot-label">vs previous period</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="map-card">
+        <div className="section-title">
+          <div>
+            <h2>District Coverage Choropleth</h2>
+            <p>Aggregated RSRP weakness by district</p>
+          </div>
+
+          <div className="legend">
+            <span>
+              <i className="dot excellent" />
+              Excellent
+            </span>
+            <span>
+              <i className="dot good" />
+              Good
+            </span>
+            <span>
+              <i className="dot fair" />
+              Fair
+            </span>
+            <span>
+              <i className="dot poor" />
+              Poor
+            </span>
+          </div>
+        </div>
+
+        <div className="map-layout">
+          <div className="sl-map-wrapper">
+            {districtGeo ? (
+              <MapBoxCoverageMap
+                geoJson={districtGeo}
+                districtStats={districtStats}
+                points={points}
+                selectedDistrict={selectedDistrict}
+                onSelectDistrict={setSelectedDistrict}
+              />
+            ) : (
+              <p>Loading map...</p>
+            )}
+          </div>
+
+          <aside className="map-side">
+            <h3>WEAK % SCALE</h3>
+            <p>
+              <i className="dot excellent" />
+              &lt; 10%
+            </p>
+            <p>
+              <i className="dot good" />
+              10–25%
+            </p>
+            <p>
+              <i className="dot fair" />
+              25–45%
+            </p>
+            <p>
+              <i className="dot poor" />
+              &gt; 45%
+            </p>
+
+            <h3>QUICK JUMP</h3>
+            {worstDistricts.slice(0, 5).map((d) => (
+              <div className="quick-row" key={d.districtName}>
+                <span>{d.districtName}</span>
+                <strong>{d.weakPercent}%</strong>
+              </div>
+            ))}
+          </aside>
+        </div>
+      </section>
+
+      <section className="map-card">
+        <div className="section-title">
+          <div>
+            <h2>MNO District Benchmark</h2>
+            <p>District-level operator RSRP average using /api/mno/district</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <label style={{ margin: 0, fontWeight: 600 }}>Operator</label>
+            <select
+              className="nt-pill"
+              value={mnoOperator}
+              onChange={(e) => setMnoOperator(e.target.value)}
+            >
+              <option value="Dialog">Dialog</option>
+              <option value="Mobitel">Mobitel</option>
+              <option value="Hutch">Hutch</option>
+              <option value="Airtel">Airtel</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="sl-map-wrapper">
+          {districtGeo ? (
+            <MnoDistrictMap geoJson={districtGeo} operator={mnoOperator} />
+          ) : (
+            <p>Loading MNO benchmark...</p>
+          )}
+        </div>
+      </section>
+
+      <section className="map-card">
+        <div className="section-title">
+          <div>
+            <h2>Hexbin Signal Coverage</h2>
+            <p>Operator grid coverage across Sri Lanka using Mapbox hexbins</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <label style={{ margin: 0, fontWeight: 600 }}>Operator</label>
+            <select
+              className="nt-pill"
+              value={hexbinOperator}
+              onChange={(e) => setHexbinOperator(e.target.value)}
+            >
+              <option value="Dialog">Dialog</option>
+              <option value="Mobitel">Mobitel</option>
+              <option value="Hutch">Hutch</option>
+            </select>
+          </div>
+        </div>
+
+        <HexMap operator={hexbinOperator} />
+      </section>
+
+      <section className="ranking-card">
+        <div className="section-title">
+          <h2>Worst Districts Ranking</h2>
+          <p>By % weak RSRP</p>
+        </div>
+
+        <div className="rank-header">
+          <span>#</span>
+          <span>District</span>
+          <span>% Weak</span>
+          <span>Median RSRP</span>
+          <span />
+        </div>
+
+        {worstDistricts.map((d, index) => (
+          <div className="rank-row" key={d.districtName}>
+            <span>{index + 1}</span>
+
+            <strong>
+              <i className="dot poor" />
+              {d.districtName}
+              <small>{d.province}</small>
+            </strong>
+
+            <div className="rank-weak">
+              <em>{d.weakPercent}%</em>
+              <div className="rank-bar">
+                <div
+                  className="rank-bar-fill"
+                  style={{ width: `${Math.min(100, d.weakPercent)}%` }}
+                />
+              </div>
+            </div>
+
+            <span className="rank-median">
+              {d.medianRsrp !== null ? d.medianRsrp : "N/A"} dBm
+            </span>
+
+            <button
+              className="rank-view"
+              type="button"
+              onClick={() => setSelectedDistrict(d.districtName)}
+            >
+              View
+            </button>
+          </div>
+        ))}
+
+        <div className="summary-strip">
+          <div>
+            <strong className="green">{goodDistricts}</strong>
+            <span>Good Coverage</span>
+          </div>
+
+          <div>
+            <strong className="red-text">{criticalDistricts}</strong>
+            <span>Critical Districts</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="province-card">
+        <h2>Province-Level Summary</h2>
+
+        <div className="province-grid">
+          {provinceSummary.map((p) => (
+            <div className="province-box" key={p.province}>
+              <span>{p.province}</span>
+              <strong>{p.weakPercent}%</strong>
+              <small>weak</small>
+              <small>{p.districts} dist.</small>
+            </div>
+          ))}
+        </div>
+      </section>
+    </Layout>
     <HomePage
       districtGeo={districtGeo}
       districtStats={districtStats}
