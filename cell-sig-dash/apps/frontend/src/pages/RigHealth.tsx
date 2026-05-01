@@ -114,10 +114,11 @@ export default function RigHealth({ currentPage, onNavigate }: RigHealthProps) {
     const latestRsrp = data.length
         ? data[data.length - 1].rsrp_dbm?.toFixed(1) ?? "—"
         : "—";
-    const avgTemp = data.length
+    const tempPoints = data.filter((d) => d.temp_c != null);
+    const avgTemp = tempPoints.length > 0
         ? (
-            data.reduce((s, d) => s + (d.temp_c ?? 0), 0) /
-            data.filter((d) => d.temp_c != null).length
+            tempPoints.reduce((s, d) => s + (d.temp_c ?? 0), 0) /
+            tempPoints.length
         ).toFixed(1)
         : "—";
 
