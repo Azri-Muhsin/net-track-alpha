@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
+import HexMap from "./components/HexMap";
 import Layout from "./components/Layout";
 import RouteAnalysis from "./pages/RouteAnalysis";
 
@@ -91,6 +92,7 @@ export default function App() {
   const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
   const [selectedDistrict, setSelectedDistrict] = useState("All Districts");
   const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+  const [hexbinOperator, setHexbinOperator] = useState("Dialog");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -576,6 +578,32 @@ export default function App() {
           </aside>
         </div>
       </section>
+
+      <section className="map-card">
+        <div className="section-title">
+          <div>
+            <h2>Hexbin Signal Coverage</h2>
+            <p>Operator grid coverage across Sri Lanka using Mapbox hexbins</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <label style={{ margin: 0, fontWeight: 600 }}>Operator</label>
+            <select
+              className="nt-pill"
+              value={hexbinOperator}
+              onChange={(e) => setHexbinOperator(e.target.value)}
+            >
+              <option value="Dialog">Dialog</option>
+              <option value="Mobitel">Mobitel</option>
+              <option value="Hutch">Hutch</option>
+            </select>
+          </div>
+        </div>
+
+        <HexMap operator={hexbinOperator} />
+      </section>
+
+
 
       <section className="ranking-card">
         <div className="section-title">

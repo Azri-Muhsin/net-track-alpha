@@ -405,6 +405,163 @@ async def get_dashboard_points(
     return valid_points[:limit]
 
 
+@app.get("/api/hexbin")
+async def get_hexbin(
+    operator: str | None = Query(None),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+    limit: int = Query(15000, le=30000),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(limit)
+    )
+
+    docs = await cursor.to_list(length=limit)
+    features = []
+
+    for doc in docs:
+        points = flatten_doc_to_points(doc, selected_operator=operator)
+        for p in points:
+            if not isinstance(p.get("lat"), (int, float)) or not isinstance(
+                p.get("lon"), (int, float)
+            ):
+                continue
+
+            rsrp = p.get("rsrp_dbm")
+            sinr = p.get("sinr_db")
+            if rsrp is None or sinr is None:
+                continue
+
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [p["lon"], p["lat"]],
+                    },
+                    "properties": {
+                        "operator": p.get("operator"),
+                        "rsrp": rsrp,
+                        "sinr": sinr,
+                        "district": p.get("district"),
+                        "province": p.get("province"),
+                        "run_id": p.get("run_id"),
+                        "ts_utc": p.get("ts_utc"),
+                    },
+                }
+            )
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+@app.get("/api/hexbin/district")
+async def get_hexbin_district(
+    operator: str | None = Query(None),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = app.state.collection.find(query, projection)
+
+    docs = await cursor.to_list(length=None)
+
+    # 🔥 aggregate manually after flatten
+    district_map = {}
+
+    for doc in docs:
+        points = flatten_doc_to_points(doc, selected_operator=operator)
+
+        for p in points:
+            lat = p.get("lat")
+            lon = p.get("lon")
+            rsrp = p.get("rsrp_dbm")
+
+            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                continue
+            if rsrp is None:
+                continue
+
+            dname = p.get("district") or "Unknown"
+
+            if dname not in district_map:
+                district_map[dname] = {
+                    "sum_rsrp": 0,
+                    "count": 0,
+                    "sum_lat": 0,
+                    "sum_lon": 0,
+                }
+
+            district_map[dname]["sum_rsrp"] += rsrp
+            district_map[dname]["count"] += 1
+            district_map[dname]["sum_lat"] += lat
+            district_map[dname]["sum_lon"] += lon
+
+    # build GeoJSON
+    features = []
+
+    for dname, v in district_map.items():
+        if v["count"] == 0:
+            continue
+
+        avg_rsrp = v["sum_rsrp"] / v["count"]
+        avg_lat = v["sum_lat"] / v["count"]
+        avg_lon = v["sum_lon"] / v["count"]
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [avg_lon, avg_lat],
+            },
+            "properties": {
+                "district": dname,
+                "avgRsrp": avg_rsrp,
+                "count": v["count"],
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
 @app.get("/api/runs")
 async def get_runs():
     pipeline = [
