@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Dict, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 
 
 class Meta(BaseModel):
@@ -38,6 +39,12 @@ class Env(BaseModel):
     humidity: float
 
 
+class Accel(BaseModel):
+    x: float = Field(..., description="X-axis acceleration m/s^2")
+    y: float = Field(..., description="Y-axis acceleration m/s^2")
+    z: float = Field(..., description="Z-axis acceleration m/s^2")
+
+
 class Ingest(BaseModel):
     pi_id: str
     phone_seq: int
@@ -49,6 +56,7 @@ class TelemetryPoint(BaseModel):
     meta: Meta
     gps: Gps
     env: Env
+    accel: Optional[Accel] = None
     ingest: Ingest
 
     district: Optional[str] = None

@@ -1,22 +1,28 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
 
+type Page = "dashboard" | "route-analysis" | "rig-health";
+
 interface LayoutProps {
   children: React.ReactNode;
   title?: string;
   topbarRight?: React.ReactNode;
+  currentPage: Page;
+  onNavigate: (page: Page) => void;
 }
 
 export default function Layout({
   children,
   title = "Dashboard",
   topbarRight,
+  currentPage,
+  onNavigate,
 }: LayoutProps) {
   const { colors } = useTheme();
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <Sidebar />
+      <Sidebar currentPage={currentPage} onNavigate={onNavigate} />
 
       <div style={{ flex: 1, overflow: "auto" }}>
         <div

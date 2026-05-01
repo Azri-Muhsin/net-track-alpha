@@ -3,6 +3,7 @@ import "./App.css";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
+import RigHealth from "./pages/RigHealth";
 
 interface DashboardPoint {
   id: string;
@@ -80,7 +81,7 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis">(
+  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis" | "rig-health">(
     "dashboard"
   );
 
@@ -247,27 +248,6 @@ export default function App() {
     fetchDashboardData();
   }, [selectedRunId, selectedOperator, selectedDistrict, threshold, dateRange]);
 
-  useEffect(() => {
-    const handleSidebarClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      const clickedItem = target.closest("div");
-      const text = clickedItem?.textContent?.trim();
-
-      if (text?.includes("Route Analysis")) {
-        setCurrentPage("route-analysis");
-      }
-
-      if (text?.includes("Overview")) {
-        setCurrentPage("dashboard");
-      }
-    };
-
-    document.addEventListener("click", handleSidebarClick);
-
-    return () => {
-      document.removeEventListener("click", handleSidebarClick);
-    };
-  }, []);
 
   const districtStats = summary?.district_stats ?? [];
 
@@ -308,7 +288,7 @@ export default function App() {
       province,
       weakPercent: Math.round(
         districts.reduce((sum, d) => sum + d.weakPercent, 0) /
-          districts.length
+        districts.length
       ),
       districts: districts.length,
     }));
@@ -339,12 +319,18 @@ export default function App() {
     criticalDelta: criticalDistricts - prevCriticalDistricts,
   };
 
+  if (currentPage === "rig-health") {
+    return <RigHealth currentPage={currentPage} onNavigate={setCurrentPage} />;
+  }
+
   if (currentPage === "route-analysis") {
-    return <RouteAnalysis />;
+    return <RouteAnalysis currentPage={currentPage} onNavigate={setCurrentPage} />;
   }
 
   return (
     <HomePage
+      currentPage={currentPage}
+      onNavigate={setCurrentPage}
       districtGeo={districtGeo}
       districtStats={districtStats}
       points={points}
