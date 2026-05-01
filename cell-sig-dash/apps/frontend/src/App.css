@@ -833,3 +833,69 @@ body {
   color: #f8fafc;
   background: rgba(148, 163, 184, 0.08);
 }
+
+body {
+  background: var(--bg, #1a1d1f);
+  color: var(--text, #f8fafc);
+}
+
+.nt-pill,
+.nt-iconbtn,
+.mno {
+  background: var(--card, rgba(255, 255, 255, 0.04));
+  color: var(--text, #f8fafc);
+  border-color: var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.kpi-card,
+.map-card,
+.ranking-card,
+.province-card {
+  background: var(--card, rgba(255, 255, 255, 0.04));
+  border-color: var(--border, rgba(255, 255, 255, 0.08));
+  color: var(--text, #f8fafc);
+}
+
+.nt-filters {
+  border-bottom-color: var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.kpi-card p,
+.kpi-card small,
+.nt-filter label,
+.section-title p,
+.kpi-foot,
+.kpi-foot-label,
+.rank-header,
+.rank-row small,
+.rank-median,
+.summary-strip span,
+.province-box span,
+.province-box small,
+.map-side h3,
+.map-side p,
+.data-table th {
+  color: var(--muted, #94a3b8);
+}
+
+.kpi-icon,
+.summary-strip div,
+.province-box,
+.quick-row {
+  background: var(--panel, rgba(255, 255, 255, 0.04));
+  border-color: var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.rank-header,
+.rank-row,
+.data-table th,
+.data-table td {
+  border-bottom-color: var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.data-table tbody tr:hover,
+.mno.active {
+  background: var(--hover, rgba(148, 163, 184, 0.08));
+}
+
+

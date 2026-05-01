@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Layout from "../components/Layout";
+import { useTheme } from "../lib/ThemeContext";
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
@@ -61,6 +62,8 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function DataTable() {
+  const { colors } = useTheme();
+
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [districts, setDistricts] = useState<string[]>([]);
 
@@ -78,6 +81,22 @@ export default function DataTable() {
 
   const [sortField, setSortField] = useState<keyof DashboardPoint>("ts_utc");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  const cardStyle: React.CSSProperties = {
+    background: colors.glassBg,
+    borderColor: colors.border,
+    color: colors.text,
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: colors.glassBg,
+    borderColor: colors.border,
+    color: colors.text,
+  };
+
+  const mutedStyle: React.CSSProperties = {
+    color: colors.textSecondary,
+  };
 
   const fetchRuns = async () => {
     const res = await fetch(`${API_BASE_URL}/api/runs`);
@@ -113,15 +132,11 @@ export default function DataTable() {
       const startTs = dateRangeToStartTs(dateRange);
       if (startTs) params.set("start_ts", startTs);
 
-      if (limit !== "all") {
-        params.set("limit", String(limit));
-        }
-
       if (limit === "all") {
         params.set("limit", "100000");
-        } else {
+      } else {
         params.set("limit", String(limit));
-        }
+      }
 
       const res = await fetch(
         `${API_BASE_URL}/api/dashboard/points?${params.toString()}`
@@ -149,41 +164,55 @@ export default function DataTable() {
 
   const handleSort = (field: keyof DashboardPoint) => {
     if (sortField === field) {
-        setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
-        setSortField(field);
-        setSortDirection("asc");
+      setSortField(field);
+      setSortDirection("asc");
     }
-    };
+  };
 
   const filteredRecords = useMemo(() => {
     return [...records].sort((a, b) => {
-        const aValue = a[sortField];
-        const bValue = b[sortField];
+      const aValue = a[sortField];
+      const bValue = b[sortField];
 
-        if (aValue == null && bValue == null) return 0;
-        if (aValue == null) return 1;
-        if (bValue == null) return -1;
+      if (aValue == null && bValue == null) return 0;
+      if (aValue == null) return 1;
+      if (bValue == null) return -1;
 
-        const result =
+      const result =
         typeof aValue === "number" && typeof bValue === "number"
-            ? aValue - bValue
-            : String(aValue).localeCompare(String(bValue));
+          ? aValue - bValue
+          : String(aValue).localeCompare(String(bValue));
 
-        return sortDirection === "asc" ? result : -result;
+      return sortDirection === "asc" ? result : -result;
     });
-    }, [records, sortField, sortDirection]);
+  }, [records, sortField, sortDirection]);
+
+  const tableHeaderStyle: React.CSSProperties = {
+    color: colors.textSecondary,
+    borderBottomColor: colors.border,
+  };
+
+  const tableCellStyle: React.CSSProperties = {
+    color: colors.text,
+    borderBottomColor: colors.border,
+  };
 
   return (
     <Layout title="Data Table" currentPage="data-table" onNavigate={() => {}}>
-      <div className="route-page">
-        <section className="nt-filters">
+      <div className="route-page" style={{ color: colors.text }}>
+        <section
+          className="nt-filters"
+          style={{ borderBottomColor: colors.border }}
+        >
           <div className="nt-filter">
-            <label>RUN</label>
+            <label style={mutedStyle}>RUN</label>
             <select
               className="nt-pill"
               value={selectedRunId}
               onChange={(e) => setSelectedRunId(e.target.value)}
+              style={inputStyle}
             >
               <option value="">All Runs</option>
               {runs.map((r) => (
@@ -195,11 +224,12 @@ export default function DataTable() {
           </div>
 
           <div className="nt-filter">
-            <label>DISTRICT</label>
+            <label style={mutedStyle}>DISTRICT</label>
             <select
               className="nt-pill"
               value={selectedDistrict}
               onChange={(e) => setSelectedDistrict(e.target.value)}
+              style={inputStyle}
             >
               <option value="all">All Districts</option>
               {districts.map((d) => (
@@ -211,13 +241,14 @@ export default function DataTable() {
           </div>
 
           <div className="nt-filter">
-            <label>OPERATOR</label>
+            <label style={mutedStyle}>OPERATOR</label>
             <select
               className="nt-pill"
               value={selectedOperator}
               onChange={(e) =>
                 setSelectedOperator(e.target.value as OperatorFilter)
               }
+              style={inputStyle}
             >
               <option value="all">All Operators</option>
               <option value="Dialog">Dialog</option>
@@ -227,11 +258,12 @@ export default function DataTable() {
           </div>
 
           <div className="nt-filter">
-            <label>TIME RANGE</label>
+            <label style={mutedStyle}>TIME RANGE</label>
             <select
               className="nt-pill"
               value={dateRange}
               onChange={(e) => setDateRange(e.target.value as DateRangeId)}
+              style={inputStyle}
             >
               <option value="24h">Last 24 Hours</option>
               <option value="7d">Last 7 Days</option>
@@ -241,100 +273,105 @@ export default function DataTable() {
           </div>
 
           <div className="nt-filter">
-            <label>LIMIT</label>
+            <label style={mutedStyle}>LIMIT</label>
             <select
-                className="nt-pill"
-                value={limit}
-                onChange={(e) =>
-                    setLimit(e.target.value === "all" ? "all" : Number(e.target.value))
-                }
-                >
-                <option value={250}>250</option>
-                <option value={500}>500</option>
-                <option value={1000}>1000</option>
-                <option value={2500}>2500</option>
-                <option value="all">All Records</option>
+              className="nt-pill"
+              value={limit}
+              onChange={(e) =>
+                setLimit(e.target.value === "all" ? "all" : Number(e.target.value))
+              }
+              style={inputStyle}
+            >
+              <option value={250}>250</option>
+              <option value={500}>500</option>
+              <option value={1000}>1000</option>
+              <option value={2500}>2500</option>
+              <option value="all">All Records</option>
             </select>
           </div>
-
         </section>
 
         {error && <div className="error-card">API Error: {error}</div>}
 
-        <section className="ranking-card">
+        <section className="ranking-card" style={cardStyle}>
           <div className="section-title">
             <div>
-              <h2>All Records</h2>
-              <p>
+              <h2 style={{ color: colors.text }}>All Records</h2>
+              <p style={mutedStyle}>
                 {loading
                   ? "Loading..."
                   : `${filteredRecords.length} records shown`}
               </p>
             </div>
 
-            <button className="nt-pill" type="button" onClick={fetchRecords}>
+            <button
+              className="nt-pill"
+              type="button"
+              onClick={fetchRecords}
+              style={inputStyle}
+            >
               {loading ? "…" : "Refresh"}
             </button>
           </div>
 
           <div className="data-table-wrap">
-            <table className="data-table">
+            <table className="data-table" style={{ color: colors.text }}>
               <thead>
                 <tr>
-                  <th onClick={() => handleSort("ts_utc")}>Time</th>
-                  <th onClick={() => handleSort("run_id")}>Run</th>
-                  <th onClick={() => handleSort("district")}>District</th>
-                  <th onClick={() => handleSort("operator")}>Operator</th>
-                  <th onClick={() => handleSort("rsrp_dbm")}>RSRP</th>
-                  <th onClick={() => handleSort("rsrq_db")}>RSRQ</th>
-                  <th onClick={() => handleSort("sinr_db")}>SINR</th>
-                  <th onClick={() => handleSort("cell_id")}>Cell ID</th>
-                  <th onClick={() => handleSort("pci")}>PCI</th>
-                  <th onClick={() => handleSort("earfcn")}>EARFCN</th>
-                  <th onClick={() => handleSort("band")}>Band</th>
-                  <th onClick={() => handleSort("lat")}>Lat</th>
-                  <th onClick={() => handleSort("lon")}>Lon</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("ts_utc")}>Time</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("run_id")}>Run</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("district")}>District</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("operator")}>Operator</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("rsrp_dbm")}>RSRP</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("rsrq_db")}>RSRQ</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("sinr_db")}>SINR</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("cell_id")}>Cell ID</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("pci")}>PCI</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("earfcn")}>EARFCN</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("band")}>Band</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("lat")}>Lat</th>
+                  <th style={tableHeaderStyle} onClick={() => handleSort("lon")}>Lon</th>
                 </tr>
               </thead>
 
               <tbody>
                 {filteredRecords.map((r, index) => (
                   <tr key={`${r.id}-${index}`}>
-                    <td>{new Date(r.ts_utc).toLocaleString()}</td>
-                    <td>{r.run_id ?? "N/A"}</td>
-                    <td>{r.district ?? "N/A"}</td>
-                    <td>
-                        <span
-                            className={`operator-badge operator-${(r.operator ?? "unknown")
-                            .toLowerCase()
-                            .trim()}`}
-                        >
-                            {r.operator ?? "N/A"}
-                        </span>
-                        </td>
-                    <td>
-                        <span
-                            className={`signal-badge ${
-                            r.rsrp_dbm == null
-                                ? "signal-unknown"
-                                : r.rsrp_dbm <= -110
-                                ? "signal-bad"
-                                : r.rsrp_dbm <= -100
-                                ? "signal-fair"
-                                : "signal-good"
-                            }`}
-                        >
-                            {r.rsrp_dbm ?? "N/A"}
-                        </span>
-                        </td>
-                    <td>{r.rsrq_db ?? "N/A"}</td>
-                    <td>{r.sinr_db ?? "N/A"}</td>
-                    <td>{r.cell_id ?? "N/A"}</td>
-                    <td>{r.pci ?? "N/A"}</td>
-                    <td>{r.earfcn ?? "N/A"}</td>
-                    <td>{r.band ?? "N/A"}</td>
-                    <td>{r.lat ?? "N/A"}</td>
-                    <td>{r.lon ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{new Date(r.ts_utc).toLocaleString()}</td>
+                    <td style={tableCellStyle}>{r.run_id ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.district ?? "N/A"}</td>
+                    <td style={tableCellStyle}>
+                      <span
+                        className={`operator-badge operator-${(r.operator ?? "unknown")
+                          .toLowerCase()
+                          .trim()}`}
+                      >
+                        {r.operator ?? "N/A"}
+                      </span>
+                    </td>
+                    <td style={tableCellStyle}>
+                      <span
+                        className={`signal-badge ${
+                          r.rsrp_dbm == null
+                            ? "signal-unknown"
+                            : r.rsrp_dbm <= -110
+                            ? "signal-bad"
+                            : r.rsrp_dbm <= -100
+                            ? "signal-fair"
+                            : "signal-good"
+                        }`}
+                      >
+                        {r.rsrp_dbm ?? "N/A"}
+                      </span>
+                    </td>
+                    <td style={tableCellStyle}>{r.rsrq_db ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.sinr_db ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.cell_id ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.pci ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.earfcn ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.band ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.lat ?? "N/A"}</td>
+                    <td style={tableCellStyle}>{r.lon ?? "N/A"}</td>
                   </tr>
                 ))}
               </tbody>
