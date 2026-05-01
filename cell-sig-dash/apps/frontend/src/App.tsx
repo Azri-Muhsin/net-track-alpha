@@ -3,7 +3,6 @@ import "./App.css";
 import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
 import MnoDistrictMap from "./components/MnoDistrictMap";
 import HexMap from "./components/HexMap";
-import MnoComp from "./components/MnoComp";
 import Layout from "./components/Layout";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
@@ -707,7 +706,7 @@ export default function App() {
           ))}
         </div>
       </section>
-    </Layout>
+
     <HomePage
       currentPage={currentPage}
       onNavigate={setCurrentPage}
@@ -739,5 +738,7 @@ export default function App() {
       deltaBadge={deltaBadge}
       deltas={deltas}
     />
+
+    </Layout>
   );
 }
