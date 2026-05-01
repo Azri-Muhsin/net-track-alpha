@@ -62,7 +62,9 @@ export default function MnoDistrictMap({
       container: containerRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
       center: [80.7718, 7.8731],
-      zoom: 7,
+      zoom: 6.7,
+      minZoom: 5,
+      maxZoom: 16,
     });
 
     mapRef.current = map;

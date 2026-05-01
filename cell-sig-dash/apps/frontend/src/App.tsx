@@ -336,6 +336,8 @@ export default function App() {
   return (
     <Layout
       title="Network Drive Testing Dashboard"
+      currentPage={currentPage}
+      onNavigate={setCurrentPage}
       topbarRight={
         <>
 
@@ -598,12 +600,53 @@ export default function App() {
           </div>
         </div>
 
-        <div className="sl-map-wrapper">
-          {districtGeo ? (
-            <MnoDistrictMap geoJson={districtGeo} operator={mnoOperator} />
-          ) : (
-            <p>Loading MNO benchmark...</p>
-          )}
+        <div className="map-layout">
+          <div className="sl-map-wrapper">
+            {districtGeo ? (
+              <MnoDistrictMap geoJson={districtGeo} operator={mnoOperator} />
+            ) : (
+              <p>Loading MNO benchmark...</p>
+            )}
+          </div>
+
+          <aside className="map-side">
+            <h3>RSRP SCALE</h3>
+
+            <p>
+              <i className="dot excellent" />
+              ≥ -70 dBm
+            </p>
+            <p>
+              <i className="dot good" />
+              -80 to -71 dBm
+            </p>
+            <p>
+              <i className="dot fair" />
+              -90 to -81 dBm
+            </p>
+            <p>
+              <i className="dot poor" />
+              -100 to -91 dBm
+            </p>
+            <p>
+              <i className="dot weak" />
+              -110 to -101 dBm
+            </p>
+            <p>
+              <i className="dot critical" />
+              &lt; -110 dBm
+            </p>
+            <p>
+              <i className="dot nodata" />
+              No Data
+            </p>
+
+            <h3>INFO</h3>
+            <p style={{ lineHeight: 1.6 }}>
+              Districts are colored based on average RSRP for the selected operator.
+              Green = strong signal, red = weak signal. Click a district to see exact values.
+            </p>
+          </aside>
         </div>
       </section>
 
