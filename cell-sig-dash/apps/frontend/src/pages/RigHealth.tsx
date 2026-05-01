@@ -6,7 +6,7 @@ import VibrationRsrpChart from "../components/VibrationRsrpChart";
 const API_BASE_URL =
     (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
 
-type Page = "dashboard" | "route-analysis" | "rig-health";
+export type Page = "dashboard" | "route-analysis" | "data-table" | "rig-health";
 
 interface RunSummary {
     run_id: string;
