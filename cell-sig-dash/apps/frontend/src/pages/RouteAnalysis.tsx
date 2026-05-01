@@ -141,6 +141,37 @@ export default function RouteAnalysis({
     );
   };
 
+  const routeStats = useMemo(() => {
+  const values = filteredPoints.filter(
+    (p) => typeof p.rsrp_dbm === "number"
+  );
+
+  const totalSamples = values.length;
+
+  const avg = (key: "rsrp_dbm" | "rsrq_db" | "sinr_db") => {
+    const nums = values
+      .map((p) => p[key])
+      .filter((v): v is number => typeof v === "number");
+
+    return nums.length
+      ? Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10
+      : null;
+  };
+
+  const weakSamples = values.filter((p) => (p.rsrp_dbm ?? 0) <= threshold).length;
+
+  return {
+    totalSamples,
+    avgRsrp: avg("rsrp_dbm"),
+    avgRsrq: avg("rsrq_db"),
+    avgSinr: avg("sinr_db"),
+    weakSamples,
+    weakPercent: totalSamples
+      ? Math.round((weakSamples / totalSamples) * 100)
+      : 0,
+  };
+}, [filteredPoints, threshold]);
+
   return (
     <Layout title="Route Analysis" currentPage={currentPage} onNavigate={onNavigate}>
       <div style={{ color: colors.text }}>
@@ -202,36 +233,73 @@ export default function RouteAnalysis({
         </div>
 
         {/* MAP */}
-        <section className="map-card" style={cardStyle}>
-          <h2 style={{ color: colors.text }}>Signal Heatmap</h2>
+        <section className="map-layout">
+          <div className="map-card" style={cardStyle}>
+            <div className="section-title">
+              <div>
+                <h2 style={{ color: colors.text }}>Signal Heatmap</h2>
+                <p style={muted}>
+                  {loading ? "Loading..." : `${filteredPoints.length} samples`}
+                </p>
+              </div>
+            </div>
 
-          <div style={{ height: 600 }}>
-            {districtGeo && (
-              <MapBoxCoverageMap
-                geoJson={districtGeo}
-                districtStats={[]}
-                points={filteredPoints}
-                selectedDistrict="All"
-                onSelectDistrict={() => {}}
-                showRoute
-                autoFitToPoints
-              />
-            )}
+            <div style={{ height: 600 }}>
+              {districtGeo && (
+                <MapBoxCoverageMap
+                  geoJson={districtGeo}
+                  districtStats={[]}
+                  points={filteredPoints}
+                  selectedDistrict="All"
+                  onSelectDistrict={() => {}}
+                  showRoute
+                  autoFitToPoints
+                />
+              )}
+            </div>
           </div>
-        </section>
+         {/* KPIs */}
+          <div className="map-card" style={cardStyle}>
+            <div className="section-title">
+              <div>
+                <h2 style={{ color: colors.text }}>Signal Summary</h2>
+                <p style={muted}>Route-level KPIs</p>
+              </div>
+            </div>
 
-        {/* KPI */}
-        <section className="map-card" style={cardStyle}>
-          <h2>Signal Summary</h2>
+            <div className="province-grid">
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Total Samples</span>
+                <strong>{routeStats.totalSamples}</strong>
+              </div>
 
-          <div className="province-grid">
-            <div className="province-box" style={inputStyle}>
-              <span style={muted}>Samples</span>
-              <strong>{filteredPoints.length}</strong>
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Avg RSRP</span>
+                <strong>{routeStats.avgRsrp ?? "N/A"} dBm</strong>
+              </div>
+
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Avg RSRQ</span>
+                <strong>{routeStats.avgRsrq ?? "N/A"} dB</strong>
+              </div>
+
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Avg SINR</span>
+                <strong>{routeStats.avgSinr ?? "N/A"} dB</strong>
+              </div>
+
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Weak Samples</span>
+                <strong>{routeStats.weakSamples}</strong>
+              </div>
+
+              <div className="province-box" style={inputStyle}>
+                <span style={muted}>Weak %</span>
+                <strong>{routeStats.weakPercent}%</strong>
+              </div>
             </div>
           </div>
         </section>
-
         {/* CHART */}
         <section className="map-card" style={cardStyle}>
           <h2>Signal Fluctuation</h2>
