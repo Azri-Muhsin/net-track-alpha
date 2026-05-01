@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Layout from "../components/Layout";
 import MapBoxCoverageMap from "../components/MapBoxCoverageMap";
+import SignalFluctuationChart from "../components/SignalFluctuationChart";
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8000";
@@ -370,6 +371,17 @@ export default function RouteAnalysis({ currentPage, onNavigate }: RouteAnalysis
             </div>
           </div>
         </section>
+
+        <section className="map-card">
+        <div className="section-title">
+          <div>
+            <h2>Signal Fluctuation During Ride</h2>
+            <p>RSRP, RSRQ and SINR variation across the selected run</p>
+          </div>
+        </div>
+
+        <SignalFluctuationChart data={filteredPoints} />
+      </section>
 
         <section className="ranking-card">
           <div className="section-title">
