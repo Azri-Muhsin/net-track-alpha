@@ -8,6 +8,7 @@ import Layout from "./components/Layout";
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
 import RigHealth from "./pages/RigHealth";
+import MnoDistrictTable from "./components/MnoDistrictTable";
 
 interface DashboardPoint {
   id: string;
@@ -582,7 +583,7 @@ export default function App() {
         <div className="section-title">
           <div>
             <h2>MNO District Benchmark</h2>
-            <p>District-level operator RSRP average using /api/mno/district</p>
+            <p>District-level operator Dialog, Hutch, Mobitel & Airtel</p>
           </div>
 
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -648,6 +649,9 @@ export default function App() {
             </p>
           </aside>
         </div>
+
+        <MnoDistrictTable operator={mnoOperator} />
+
       </section>
 
       <section className="map-card">
