@@ -5,7 +5,9 @@ import MnoDistrictMap from "./components/MnoDistrictMap";
 import HexMap from "./components/HexMap";
 import MnoComp from "./components/MnoComp";
 import Layout from "./components/Layout";
+
 import RouteAnalysis from "./pages/RouteAnalysis";
+import HomePage from "./pages/HomePage";
 
 interface DashboardPoint {
   id: string;
@@ -24,6 +26,9 @@ interface DistrictStat {
   weakPercent: number;
   avgRsrp: number | null;
   medianRsrp: number | null;
+
+  avgRsrq: number | null;
+  avgSinr: number | null;
 }
 
 interface RunSummary {
@@ -46,6 +51,7 @@ interface DashboardSummaryResponse {
 }
 
 type DateRangeId = "24h" | "7d" | "30d" | "all";
+type OperatorFilter = "all" | "Dialog" | "Mobitel" | "Hutch";
 
 const GEOJSON_PATH = "/sri_lanka_districts.geojson";
 
@@ -80,8 +86,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis">(
-  "dashboard"
+    "dashboard"
   );
+
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
   const [prevSummary, setPrevSummary] =
@@ -91,8 +98,9 @@ export default function App() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
 
   const [selectedRunId, setSelectedRunId] = useState("");
-  const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
-  const [selectedDistrict, setSelectedDistrict] = useState("All Districts");
+  const [selectedOperator, setSelectedOperator] =
+    useState<OperatorFilter>("all");
+  const [selectedDistrict, setSelectedDistrict] = useState("all");
   const [dateRange, setDateRange] = useState<DateRangeId>("7d");
   const [hexbinOperator, setHexbinOperator] = useState("Dialog");
   const [mnoOperator, setMnoOperator] = useState("Dialog");
@@ -116,14 +124,15 @@ export default function App() {
   ) => {
     const p = new URLSearchParams();
 
-    if (selectedRunId) p.set("run_id", selectedRunId);
-    if (selectedOperator) p.set("operator", selectedOperator);
+    if (selectedRunId) {
+      p.set("run_id", selectedRunId);
+    }
 
-    if (
-      includeDistrict &&
-      selectedDistrict &&
-      selectedDistrict !== "All Districts"
-    ) {
+    if (selectedOperator !== "all") {
+      p.set("operator", selectedOperator);
+    }
+
+    if (includeDistrict && selectedDistrict !== "all") {
       p.set("district", selectedDistrict);
     }
 
@@ -246,27 +255,26 @@ export default function App() {
   }, [selectedRunId, selectedOperator, selectedDistrict, threshold, dateRange]);
 
   useEffect(() => {
-  const handleSidebarClick = (event: MouseEvent) => {
-    const target = event.target as HTMLElement;
-    const clickedItem = target.closest("div");
+    const handleSidebarClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const clickedItem = target.closest("div");
+      const text = clickedItem?.textContent?.trim();
 
-    const text = clickedItem?.textContent?.trim();
+      if (text?.includes("Route Analysis")) {
+        setCurrentPage("route-analysis");
+      }
 
-    if (text?.includes("Route Analysis")) {
-      setCurrentPage("route-analysis");
-    }
+      if (text?.includes("Overview")) {
+        setCurrentPage("dashboard");
+      }
+    };
 
-    if (text?.includes("Overview")) {
-      setCurrentPage("dashboard");
-    }
-  };
+    document.addEventListener("click", handleSidebarClick);
 
-  document.addEventListener("click", handleSidebarClick);
-
-  return () => {
-    document.removeEventListener("click", handleSidebarClick);
-  };
-}, []);
+    return () => {
+      document.removeEventListener("click", handleSidebarClick);
+    };
+  }, []);
 
   const districtStats = summary?.district_stats ?? [];
 
@@ -306,7 +314,8 @@ export default function App() {
     return Object.entries(groups).map(([province, districts]) => ({
       province,
       weakPercent: Math.round(
-        districts.reduce((sum, d) => sum + d.weakPercent, 0) / districts.length
+        districts.reduce((sum, d) => sum + d.weakPercent, 0) /
+          districts.length
       ),
       districts: districts.length,
     }));
@@ -321,7 +330,9 @@ export default function App() {
 
     return (
       <span className={cls}>
-        {suffix === "dBm" ? `${sign} ${abs} ${suffix}` : `${sign} ${abs}${suffix}`}
+        {suffix === "dBm"
+          ? `${sign} ${abs} ${suffix}`
+          : `${sign} ${abs}${suffix}`}
       </span>
     );
   };
@@ -336,8 +347,8 @@ export default function App() {
   };
 
   if (currentPage === "route-analysis") {
-  return <RouteAnalysis />;
-}
+    return <RouteAnalysis />;
+  }
 
   return (
     <Layout
@@ -754,5 +765,34 @@ export default function App() {
         </div>
       </section>
     </Layout>
+    <HomePage
+      districtGeo={districtGeo}
+      districtStats={districtStats}
+      points={points}
+      runs={runs}
+      selectedRunId={selectedRunId}
+      setSelectedRunId={setSelectedRunId}
+      selectedOperator={selectedOperator}
+      setSelectedOperator={setSelectedOperator}
+      selectedDistrict={selectedDistrict}
+      setSelectedDistrict={setSelectedDistrict}
+      dateRange={dateRange}
+      setDateRange={setDateRange}
+      threshold={threshold}
+      setThreshold={setThreshold}
+      apiError={apiError}
+      geoError={geoError}
+      loading={loading}
+      fetchDashboardData={fetchDashboardData}
+      getDistrictName={getDistrictName}
+      worstDistricts={worstDistricts}
+      avgRsrp={avgRsrp}
+      weakCoverage={weakCoverage}
+      criticalDistricts={criticalDistricts}
+      goodDistricts={goodDistricts}
+      provinceSummary={provinceSummary}
+      deltaBadge={deltaBadge}
+      deltas={deltas}
+    />
   );
 }
