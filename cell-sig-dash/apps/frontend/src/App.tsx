@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
+import MnoDistrictMap from "./components/MnoDistrictMap";
 import HexMap from "./components/HexMap";
+import MnoComp from "./components/MnoComp";
 import Layout from "./components/Layout";
 import RouteAnalysis from "./pages/RouteAnalysis";
 
@@ -93,6 +95,7 @@ export default function App() {
   const [selectedDistrict, setSelectedDistrict] = useState("All Districts");
   const [dateRange, setDateRange] = useState<DateRangeId>("7d");
   const [hexbinOperator, setHexbinOperator] = useState("Dialog");
+  const [mnoOperator, setMnoOperator] = useState("Dialog");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -582,6 +585,37 @@ export default function App() {
       <section className="map-card">
         <div className="section-title">
           <div>
+            <h2>MNO District Benchmark</h2>
+            <p>District-level operator RSRP average using /api/mno/district</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <label style={{ margin: 0, fontWeight: 600 }}>Operator</label>
+            <select
+              className="nt-pill"
+              value={mnoOperator}
+              onChange={(e) => setMnoOperator(e.target.value)}
+            >
+              <option value="Dialog">Dialog</option>
+              <option value="Mobitel">Mobitel</option>
+              <option value="Hutch">Hutch</option>
+              <option value="Airtel">Airtel</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="sl-map-wrapper">
+          {districtGeo ? (
+            <MnoDistrictMap geoJson={districtGeo} operator={mnoOperator} />
+          ) : (
+            <p>Loading MNO benchmark...</p>
+          )}
+        </div>
+      </section>
+
+      <section className="map-card">
+        <div className="section-title">
+          <div>
             <h2>Hexbin Signal Coverage</h2>
             <p>Operator grid coverage across Sri Lanka using Mapbox hexbins</p>
           </div>
@@ -602,8 +636,6 @@ export default function App() {
 
         <HexMap operator={hexbinOperator} />
       </section>
-
-
 
       <section className="ranking-card">
         <div className="section-title">

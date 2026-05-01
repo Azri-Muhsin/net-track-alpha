@@ -71,6 +71,36 @@ def clean_district_name(value: str | None):
     return value.replace(" District", "").strip()
 
 
+def get_rsrp_color(rsrp: float | None):
+    if rsrp is None:
+        return "#374151"
+    if rsrp >= -70:
+        return "#1a9850"
+    if rsrp >= -80:
+        return "#66bd63"
+    if rsrp >= -90:
+        return "#fee08b"
+    if rsrp >= -100:
+        return "#fc8d59"
+    if rsrp >= -110:
+        return "#f46d43"
+    return "#d73027"
+
+
+def get_rsrp_rating(rsrp: float | None):
+    if rsrp is None:
+        return "Unknown"
+    if rsrp >= -70:
+        return "Excellent"
+    if rsrp >= -80:
+        return "Good"
+    if rsrp >= -90:
+        return "Fair"
+    if rsrp >= -100:
+        return "Poor"
+    return "Critical"
+
+
 def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
     points = []
 
@@ -560,6 +590,93 @@ async def get_hexbin_district(
         "type": "FeatureCollection",
         "features": features,
     }
+
+@app.get("/api/mno/district")
+async def get_mno_district(
+    operator: str = Query("Dialog"),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+    projection = {
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = app.state.collection.find(query, projection)
+    docs = await cursor.to_list(length=None)
+
+    district_map: dict[str, dict[str, float | int]] = {}
+
+    for doc in docs:
+        district_name = clean_district_name(
+            doc.get("district") or doc.get("ingest", {}).get("district")
+        )
+
+        op = (doc.get("operators") or {}).get(operator)
+        if not op:
+            continue
+
+        rsrp = op.get("rsrp_dbm")
+        sinr = op.get("sinr_db")
+        lat = doc.get("gps", {}).get("lat")
+        lon = doc.get("gps", {}).get("lon")
+
+        if rsrp is None or lat is None or lon is None:
+            continue
+
+        if district_name not in district_map:
+            district_map[district_name] = {
+                "sum_rsrp": 0.0,
+                "sum_sinr": 0.0,
+                "count": 0,
+                "sum_lat": 0.0,
+                "sum_lon": 0.0,
+            }
+
+        district_map[district_name]["sum_rsrp"] += float(rsrp)
+        district_map[district_name]["count"] += 1
+        district_map[district_name]["sum_lat"] += float(lat)
+        district_map[district_name]["sum_lon"] += float(lon)
+
+        if isinstance(sinr, (int, float)):
+            district_map[district_name]["sum_sinr"] += float(sinr)
+
+    results = []
+
+    for district_name, values in district_map.items():
+        if values["count"] == 0:
+            continue
+
+        avg_rsrp = values["sum_rsrp"] / values["count"]
+        avg_sinr = (
+            values["sum_sinr"] / values["count"]
+            if values["sum_sinr"] != 0
+            else None
+        )
+
+        results.append(
+            {
+                "district": district_name,
+                "operator": operator,
+                "avgRsrp": avg_rsrp,
+                "avgSinr": avg_sinr,
+                "count": values["count"],
+                "lat": values["sum_lat"] / values["count"],
+                "lon": values["sum_lon"] / values["count"],
+                "rating": get_rsrp_rating(avg_rsrp),
+                "fillColor": get_rsrp_color(avg_rsrp),
+            }
+        )
+
+    return {"operator": operator, "data": results}
 
 
 @app.get("/api/runs")
