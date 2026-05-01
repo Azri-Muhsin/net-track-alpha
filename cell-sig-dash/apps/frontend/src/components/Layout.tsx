@@ -1,37 +1,28 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
 
-type Page = "dashboard" | "route-analysis" | "rig-health";
+type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table";
 
 interface LayoutProps {
   children: React.ReactNode;
   title?: string;
   topbarRight?: React.ReactNode;
-<<<<<<< HEAD
-  activePage?: "overview" | "route-analysis" | "data-table";
-=======
   currentPage: Page;
   onNavigate: (page: Page) => void;
->>>>>>> 25b3bbc71a4bd345976c1c4338237647f945ca5a
 }
 
 export default function Layout({
   children,
   title = "Dashboard",
   topbarRight,
-<<<<<<< HEAD
-  activePage = "overview",
-=======
   currentPage,
   onNavigate,
->>>>>>> 25b3bbc71a4bd345976c1c4338237647f945ca5a
 }: LayoutProps) {
   const { colors } = useTheme();
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <Sidebar currentPage={currentPage} onNavigate={onNavigate} />
-
+     <Sidebar currentPage={currentPage} onNavigate={onNavigate} />
       <div style={{ flex: 1, overflow: "auto" }}>
         <div
           style={{
