@@ -3,6 +3,7 @@ import "./App.css";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
+import DataTable from "./pages/DataTable";
 
 interface DashboardPoint {
   id: string;
@@ -80,9 +81,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis">(
-    "dashboard"
-  );
+  const [currentPage, setCurrentPage] = useState<
+  "dashboard" | "route-analysis" | "data-table"
+>("dashboard");
 
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
@@ -96,7 +97,7 @@ export default function App() {
   const [selectedOperator, setSelectedOperator] =
     useState<OperatorFilter>("all");
   const [selectedDistrict, setSelectedDistrict] = useState("all");
-  const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+  const [dateRange, setDateRange] = useState<DateRangeId>("all");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -260,6 +261,9 @@ export default function App() {
       if (text?.includes("Overview")) {
         setCurrentPage("dashboard");
       }
+      if (text?.includes("Data Table")) {
+        setCurrentPage("data-table");
+      }
     };
 
     document.addEventListener("click", handleSidebarClick);
@@ -342,6 +346,9 @@ export default function App() {
   if (currentPage === "route-analysis") {
     return <RouteAnalysis />;
   }
+  if (currentPage === "data-table") {
+        return <DataTable />;
+      }
 
   return (
     <HomePage

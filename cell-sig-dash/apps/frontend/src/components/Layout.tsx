@@ -5,12 +5,14 @@ interface LayoutProps {
   children: React.ReactNode;
   title?: string;
   topbarRight?: React.ReactNode;
+  activePage?: "overview" | "route-analysis" | "data-table";
 }
 
 export default function Layout({
   children,
   title = "Dashboard",
   topbarRight,
+  activePage = "overview",
 }: LayoutProps) {
   const { colors } = useTheme();
 

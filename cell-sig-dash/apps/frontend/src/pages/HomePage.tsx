@@ -114,7 +114,7 @@ export default function HomePage(props: any) {
                 setSelectedDistrict("all");
                 setSelectedOperator("all");
                 setThreshold(-110);
-                setDateRange("7d");
+                setDateRange("all");
                 setSelectedRunId("");
               }}
             >

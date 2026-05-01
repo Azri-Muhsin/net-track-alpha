@@ -2,7 +2,11 @@ import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
 
-export default function Sidebar() {
+interface SidebarProps {
+  activePage?: "overview" | "route-analysis" | "data-table";
+}
+
+export default function Sidebar({ activePage = "overview" }: SidebarProps) {
   const { theme, setTheme, colors } = useTheme();
   const [open, setOpen] = useState(true);
   const [mobile, setMobile] = useState(false);
@@ -10,28 +14,25 @@ export default function Sidebar() {
   useEffect(() => {
     const checkMobile = () => {
       setMobile(window.innerWidth < 768);
-      if (window.innerWidth < 768) {
-        setOpen(false);
-      } else {
-        setOpen(true);
-      }
+      setOpen(window.innerWidth >= 768);
     };
+
     checkMobile();
     window.addEventListener("resize", checkMobile);
+
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   const menuItems = [
-    { icon: "🏠", label: "Overview", active: true },
-    { icon: "📊", label: "MNO Benchmark", active: false },
-    { icon: "🗺️", label: "Route Analysis", active: false },
-    { icon: "📈", label: "Data Table", active: false },
-    { icon: "⚙️", label: "Settings", active: false },
+    { icon: "🏠", label: "Overview", page: "overview" },
+    { icon: "📊", label: "MNO Benchmark", page: "mno-benchmark" },
+    { icon: "🗺️", label: "Route Analysis", page: "route-analysis" },
+    { icon: "📈", label: "Data Table", page: "data-table" },
+    { icon: "⚙️", label: "Settings", page: "settings" },
   ];
 
   return (
     <>
-      {/* Mobile Overlay */}
       {mobile && open && (
         <div
           onClick={() => setOpen(false)}
@@ -48,7 +49,6 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Sidebar */}
       <div
         style={{
           position: mobile ? "fixed" : "relative",
@@ -65,7 +65,6 @@ export default function Sidebar() {
           boxShadow: colors.shadow,
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: "20px 16px",
@@ -96,6 +95,7 @@ export default function Sidebar() {
                   style={{ width: 50, height: 50, objectFit: "contain" }}
                 />
               </div>
+
               <h3
                 style={{
                   margin: 0,
@@ -110,7 +110,9 @@ export default function Sidebar() {
               </h3>
             </div>
           )}
+
           <button
+            type="button"
             onClick={() => setOpen(!open)}
             style={{
               background: "transparent",
@@ -136,42 +138,44 @@ export default function Sidebar() {
           </button>
         </div>
 
-        {/* Navigation Items */}
         <div style={{ flex: 1, padding: "12px 0" }}>
-          {menuItems.map((item, idx) => (
-            <div
-              key={idx}
-              style={{
-                padding: "12px 16px",
-                margin: "4px 12px",
-                borderRadius: 12,
-                background: item.active ? colors.accent : "transparent",
-                color: item.active ? "#fff" : colors.text,
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                cursor: "pointer",
-                transition: "all 0.2s",
-                fontWeight: item.active ? 600 : 400,
-              }}
-              onMouseEnter={(e) => {
-                if (!item.active) {
-                  e.currentTarget.style.background = colors.cardHover;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!item.active) {
-                  e.currentTarget.style.background = "transparent";
-                }
-              }}
-            >
-              <span style={{ fontSize: 20 }}>{item.icon}</span>
-              {open && <span>{item.label}</span>}
-            </div>
-          ))}
+          {menuItems.map((item) => {
+            const isActive = item.page === activePage;
+
+            return (
+              <div
+                key={item.page}
+                style={{
+                  padding: "12px 16px",
+                  margin: "4px 12px",
+                  borderRadius: 12,
+                  background: isActive ? colors.accent : "transparent",
+                  color: isActive ? "#fff" : colors.text,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  fontWeight: isActive ? 600 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = colors.cardHover;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
+              >
+                <span style={{ fontSize: 20 }}>{item.icon}</span>
+                {open && <span>{item.label}</span>}
+              </div>
+            );
+          })}
         </div>
 
-        {/* Theme Selector */}
         <div
           style={{
             padding: "16px",
@@ -183,8 +187,10 @@ export default function Sidebar() {
               APPEARANCE
             </div>
           )}
+
           <div style={{ display: "flex", gap: 8, flexDirection: open ? "row" : "column" }}>
             <button
+              type="button"
               onClick={() => setTheme("dark")}
               style={{
                 flex: 1,
@@ -204,7 +210,9 @@ export default function Sidebar() {
             >
               {open ? "🌙 Dark" : "🌙"}
             </button>
+
             <button
+              type="button"
               onClick={() => setTheme("light")}
               style={{
                 flex: 1,
@@ -224,7 +232,9 @@ export default function Sidebar() {
             >
               {open ? "☀️ Light" : "☀️"}
             </button>
+
             <button
+              type="button"
               onClick={() => setTheme("colorblind")}
               style={{
                 flex: 1,
