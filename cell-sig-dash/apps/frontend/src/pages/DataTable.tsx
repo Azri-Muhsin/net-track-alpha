@@ -74,8 +74,10 @@ export default function DataTable() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [search, setSearch] = useState("");
-  const [limit, setLimit] = useState(500);
+  const [limit, setLimit] = useState<number | "all">("all");
+
+  const [sortField, setSortField] = useState<keyof DashboardPoint>("ts_utc");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   const fetchRuns = async () => {
     const res = await fetch(`${API_BASE_URL}/api/runs`);
@@ -111,7 +113,15 @@ export default function DataTable() {
       const startTs = dateRangeToStartTs(dateRange);
       if (startTs) params.set("start_ts", startTs);
 
-      params.set("limit", String(limit));
+      if (limit !== "all") {
+        params.set("limit", String(limit));
+        }
+
+      if (limit === "all") {
+        params.set("limit", "100000");
+        } else {
+        params.set("limit", String(limit));
+        }
 
       const res = await fetch(
         `${API_BASE_URL}/api/dashboard/points?${params.toString()}`
@@ -137,25 +147,32 @@ export default function DataTable() {
     fetchRecords();
   }, [selectedRunId, selectedDistrict, selectedOperator, dateRange, limit]);
 
+  const handleSort = (field: keyof DashboardPoint) => {
+    if (sortField === field) {
+        setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+        setSortField(field);
+        setSortDirection("asc");
+    }
+    };
+
   const filteredRecords = useMemo(() => {
-    if (!search.trim()) return records;
+    return [...records].sort((a, b) => {
+        const aValue = a[sortField];
+        const bValue = b[sortField];
 
-    const q = search.toLowerCase();
+        if (aValue == null && bValue == null) return 0;
+        if (aValue == null) return 1;
+        if (bValue == null) return -1;
 
-    return records.filter((r) =>
-      [
-        r.run_id,
-        r.operator,
-        r.district,
-        r.province,
-        r.cell_id,
-        r.band,
-        r.ts_utc,
-      ]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q))
-    );
-  }, [records, search]);
+        const result =
+        typeof aValue === "number" && typeof bValue === "number"
+            ? aValue - bValue
+            : String(aValue).localeCompare(String(bValue));
+
+        return sortDirection === "asc" ? result : -result;
+    });
+    }, [records, sortField, sortDirection]);
 
   return (
     <Layout title="Data Table" currentPage="data-table" onNavigate={() => {}}>
@@ -226,26 +243,20 @@ export default function DataTable() {
           <div className="nt-filter">
             <label>LIMIT</label>
             <select
-              className="nt-pill"
-              value={limit}
-              onChange={(e) => setLimit(Number(e.target.value))}
-            >
-              <option value={250}>250</option>
-              <option value={500}>500</option>
-              <option value={1000}>1000</option>
-              <option value={2500}>2500</option>
+                className="nt-pill"
+                value={limit}
+                onChange={(e) =>
+                    setLimit(e.target.value === "all" ? "all" : Number(e.target.value))
+                }
+                >
+                <option value={250}>250</option>
+                <option value={500}>500</option>
+                <option value={1000}>1000</option>
+                <option value={2500}>2500</option>
+                <option value="all">All Records</option>
             </select>
           </div>
 
-          <div className="nt-filter grow">
-            <label>SEARCH</label>
-            <input
-              className="nt-pill"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search run, cell, district..."
-            />
-          </div>
         </section>
 
         {error && <div className="error-card">API Error: {error}</div>}
@@ -270,19 +281,19 @@ export default function DataTable() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Run</th>
-                  <th>District</th>
-                  <th>Operator</th>
-                  <th>RSRP</th>
-                  <th>RSRQ</th>
-                  <th>SINR</th>
-                  <th>Cell ID</th>
-                  <th>PCI</th>
-                  <th>EARFCN</th>
-                  <th>Band</th>
-                  <th>Lat</th>
-                  <th>Lon</th>
+                  <th onClick={() => handleSort("ts_utc")}>Time</th>
+                  <th onClick={() => handleSort("run_id")}>Run</th>
+                  <th onClick={() => handleSort("district")}>District</th>
+                  <th onClick={() => handleSort("operator")}>Operator</th>
+                  <th onClick={() => handleSort("rsrp_dbm")}>RSRP</th>
+                  <th onClick={() => handleSort("rsrq_db")}>RSRQ</th>
+                  <th onClick={() => handleSort("sinr_db")}>SINR</th>
+                  <th onClick={() => handleSort("cell_id")}>Cell ID</th>
+                  <th onClick={() => handleSort("pci")}>PCI</th>
+                  <th onClick={() => handleSort("earfcn")}>EARFCN</th>
+                  <th onClick={() => handleSort("band")}>Band</th>
+                  <th onClick={() => handleSort("lat")}>Lat</th>
+                  <th onClick={() => handleSort("lon")}>Lon</th>
                 </tr>
               </thead>
 
@@ -292,8 +303,30 @@ export default function DataTable() {
                     <td>{new Date(r.ts_utc).toLocaleString()}</td>
                     <td>{r.run_id ?? "N/A"}</td>
                     <td>{r.district ?? "N/A"}</td>
-                    <td>{r.operator ?? "N/A"}</td>
-                    <td>{r.rsrp_dbm ?? "N/A"}</td>
+                    <td>
+                        <span
+                            className={`operator-badge operator-${(r.operator ?? "unknown")
+                            .toLowerCase()
+                            .trim()}`}
+                        >
+                            {r.operator ?? "N/A"}
+                        </span>
+                        </td>
+                    <td>
+                        <span
+                            className={`signal-badge ${
+                            r.rsrp_dbm == null
+                                ? "signal-unknown"
+                                : r.rsrp_dbm <= -110
+                                ? "signal-bad"
+                                : r.rsrp_dbm <= -100
+                                ? "signal-fair"
+                                : "signal-good"
+                            }`}
+                        >
+                            {r.rsrp_dbm ?? "N/A"}
+                        </span>
+                        </td>
                     <td>{r.rsrq_db ?? "N/A"}</td>
                     <td>{r.sinr_db ?? "N/A"}</td>
                     <td>{r.cell_id ?? "N/A"}</td>

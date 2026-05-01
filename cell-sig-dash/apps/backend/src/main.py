@@ -731,7 +731,7 @@ async def get_dashboard_points(
     district: str | None = Query(None),
     start_ts: str | None = Query(None),
     end_ts: str | None = Query(None),
-    limit: int = Query(3000, le=10000),
+    limit: int = Query(100000, le=100000),
 ):
     query = build_base_query(run_id, district, start_ts, end_ts)
 

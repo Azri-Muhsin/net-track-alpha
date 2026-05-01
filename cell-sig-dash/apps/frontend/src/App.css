@@ -756,3 +756,80 @@ body {
 .data-table tbody tr:hover {
   background: rgba(148, 163, 184, 0.08);
 }
+
+.operator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.operator-dialog {
+  background: #0ea5e9;
+  color: white;
+}
+
+.operator-mobitel {
+  background: #22c55e;
+  color: white;
+}
+
+.operator-hutch {
+  background: #facc15;
+  color: #111827;
+}
+
+.operator-unknown {
+  background: #64748b;
+  color: white;
+}
+
+.signal-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.signal-good {
+  background: rgba(34, 197, 94, 0.18);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.signal-fair {
+  background: rgba(250, 204, 21, 0.18);
+  color: #facc15;
+  border: 1px solid rgba(250, 204, 21, 0.4);
+}
+
+.signal-bad {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
+.signal-unknown {
+  background: rgba(100, 116, 139, 0.18);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+}
+
+.data-table th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.data-table th:hover {
+  color: #f8fafc;
+  background: rgba(148, 163, 184, 0.08);
+}
