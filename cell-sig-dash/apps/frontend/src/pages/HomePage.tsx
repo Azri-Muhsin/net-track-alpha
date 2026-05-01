@@ -3,6 +3,8 @@ import MapBoxCoverageMap from "../components/MapBoxCoverageMap";
 
 export default function HomePage(props: any) {
   const {
+    currentPage,
+    onNavigate,
     districtGeo,
     districtStats,
     runs,
@@ -34,6 +36,8 @@ export default function HomePage(props: any) {
   return (
     <Layout
       title="Network Drive Testing Dashboard"
+      currentPage={currentPage}
+      onNavigate={onNavigate}
       topbarRight={
         <>
           <select
@@ -80,9 +84,8 @@ export default function HomePage(props: any) {
             {["Dialog", "Mobitel", "Hutch"].map((op) => (
               <button
                 key={op}
-                className={`mno ${op.toLowerCase()} ${
-                  selectedOperator === op ? "active" : ""
-                }`}
+                className={`mno ${op.toLowerCase()} ${selectedOperator === op ? "active" : ""
+                  }`}
                 onClick={() =>
                   setSelectedOperator(selectedOperator === op ? "all" : op)
                 }

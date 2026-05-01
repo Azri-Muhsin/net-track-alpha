@@ -158,7 +158,7 @@ export default function DataTable() {
   }, [records, search]);
 
   return (
-    <Layout title="Data Table" activePage="data-table">
+    <Layout title="Data Table" currentPage="data-table" onNavigate={() => {}}>
       <div className="route-page">
         <section className="nt-filters">
           <div className="nt-filter">

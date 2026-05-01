@@ -2,11 +2,14 @@ import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
 
+type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table";
+
 interface SidebarProps {
-  activePage?: "overview" | "route-analysis" | "data-table";
+  currentPage: Page;
+  onNavigate: (page: Page) => void;
 }
 
-export default function Sidebar({ activePage = "overview" }: SidebarProps) {
+export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const { theme, setTheme, colors } = useTheme();
   const [open, setOpen] = useState(true);
   const [mobile, setMobile] = useState(false);
@@ -23,13 +26,15 @@ export default function Sidebar({ activePage = "overview" }: SidebarProps) {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  const menuItems = [
-    { icon: "🏠", label: "Overview", page: "overview" },
-    { icon: "📊", label: "MNO Benchmark", page: "mno-benchmark" },
+
+  const menuItems: { icon: string; label: string; page: Page }[] = [
+    { icon: "🏠", label: "Overview", page: "dashboard" },
     { icon: "🗺️", label: "Route Analysis", page: "route-analysis" },
+    { icon: "🌡️", label: "Rig Health", page: "rig-health" },
     { icon: "📈", label: "Data Table", page: "data-table" },
-    { icon: "⚙️", label: "Settings", page: "settings" },
   ];
+
+  const disabledItems = ["MNO Benchmark", "Data Table", "Settings"];
 
   return (
     <>
@@ -139,41 +144,89 @@ export default function Sidebar({ activePage = "overview" }: SidebarProps) {
         </div>
 
         <div style={{ flex: 1, padding: "12px 0" }}>
-          {menuItems.map((item) => {
-            const isActive = item.page === activePage;
+          {open && (
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                opacity: 0.45,
+                padding: "4px 28px 10px",
+              }}
+            >
+              MAIN MENU
+            </div>
+          )}
 
+          {menuItems.map((item) => {
+            const active = currentPage === item.page;
             return (
               <div
                 key={item.page}
+                onClick={() => onNavigate(item.page)}
                 style={{
                   padding: "12px 16px",
                   margin: "4px 12px",
                   borderRadius: 12,
-                  background: isActive ? colors.accent : "transparent",
-                  color: isActive ? "#fff" : colors.text,
+                  background: active ? colors.accent : "transparent",
+                  color: active ? "#fff" : colors.text,
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
                   cursor: "pointer",
                   transition: "all 0.2s",
-                  fontWeight: isActive ? 600 : 400,
+                  fontWeight: active ? 600 : 400,
                 }}
                 onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = colors.cardHover;
-                  }
+                  if (!active) e.currentTarget.style.background = colors.cardHover;
                 }}
                 onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = "transparent";
-                  }
+                  if (!active) e.currentTarget.style.background = "transparent";
                 }}
               >
-                <span style={{ fontSize: 20 }}>{item.icon}</span>
+                <span style={{ fontSize: 20, minWidth: 24, textAlign: "center" }}>
+                  {item.icon}
+                </span>
                 {open && <span>{item.label}</span>}
               </div>
             );
           })}
+
+          {open && (
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                opacity: 0.45,
+                padding: "16px 28px 10px",
+              }}
+            >
+              COMING SOON
+            </div>
+          )}
+
+          {disabledItems.map((label) => (
+            <div
+              key={label}
+              style={{
+                padding: "12px 16px",
+                margin: "4px 12px",
+                borderRadius: 12,
+                color: colors.text,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                opacity: 0.35,
+                cursor: "not-allowed",
+              }}
+            >
+              <span style={{ fontSize: 20, minWidth: 24, textAlign: "center" }}>
+                {label === "MNO Benchmark" ? "📊" : label === "Data Table" ? "📈" : "⚙️"}
+              </span>
+              {open && <span>{label}</span>}
+            </div>
+          ))}
         </div>
 
         <div

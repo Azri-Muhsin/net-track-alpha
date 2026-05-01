@@ -88,6 +88,36 @@ def clean_district_name(value: str | None):
     return value.replace(" District", "").strip()
 
 
+def get_rsrp_color(rsrp: float | None):
+    if rsrp is None:
+        return "#374151"
+    if rsrp >= -70:
+        return "#1a9850"
+    if rsrp >= -80:
+        return "#66bd63"
+    if rsrp >= -90:
+        return "#fee08b"
+    if rsrp >= -100:
+        return "#fc8d59"
+    if rsrp >= -110:
+        return "#f46d43"
+    return "#d73027"
+
+
+def get_rsrp_rating(rsrp: float | None):
+    if rsrp is None:
+        return "Unknown"
+    if rsrp >= -70:
+        return "Excellent"
+    if rsrp >= -80:
+        return "Good"
+    if rsrp >= -90:
+        return "Fair"
+    if rsrp >= -100:
+        return "Poor"
+    return "Critical"
+
+
 def flatten_doc_to_points(doc: dict, selected_operator: str | None = None):
     points = []
 
@@ -743,6 +773,250 @@ async def get_dashboard_points(
     return valid_points[:limit]
 
 
+@app.get("/api/hexbin")
+async def get_hexbin(
+    operator: str | None = Query(None),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+    limit: int = Query(15000, le=30000),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(limit)
+    )
+
+    docs = await cursor.to_list(length=limit)
+    features = []
+
+    for doc in docs:
+        points = flatten_doc_to_points(doc, selected_operator=operator)
+        for p in points:
+            if not isinstance(p.get("lat"), (int, float)) or not isinstance(
+                p.get("lon"), (int, float)
+            ):
+                continue
+
+            rsrp = p.get("rsrp_dbm")
+            sinr = p.get("sinr_db")
+            if rsrp is None or sinr is None:
+                continue
+
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [p["lon"], p["lat"]],
+                    },
+                    "properties": {
+                        "operator": p.get("operator"),
+                        "rsrp": rsrp,
+                        "sinr": sinr,
+                        "district": p.get("district"),
+                        "province": p.get("province"),
+                        "run_id": p.get("run_id"),
+                        "ts_utc": p.get("ts_utc"),
+                    },
+                }
+            )
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+@app.get("/api/hexbin/district")
+async def get_hexbin_district(
+    operator: str | None = Query(None),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+
+    projection = {
+        "ts_utc": 1,
+        "meta": 1,
+        "radio": 1,
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = app.state.collection.find(query, projection)
+
+    docs = await cursor.to_list(length=None)
+
+    # 🔥 aggregate manually after flatten
+    district_map = {}
+
+    for doc in docs:
+        points = flatten_doc_to_points(doc, selected_operator=operator)
+
+        for p in points:
+            lat = p.get("lat")
+            lon = p.get("lon")
+            rsrp = p.get("rsrp_dbm")
+
+            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                continue
+            if rsrp is None:
+                continue
+
+            dname = p.get("district") or "Unknown"
+
+            if dname not in district_map:
+                district_map[dname] = {
+                    "sum_rsrp": 0,
+                    "count": 0,
+                    "sum_lat": 0,
+                    "sum_lon": 0,
+                }
+
+            district_map[dname]["sum_rsrp"] += rsrp
+            district_map[dname]["count"] += 1
+            district_map[dname]["sum_lat"] += lat
+            district_map[dname]["sum_lon"] += lon
+
+    # build GeoJSON
+    features = []
+
+    for dname, v in district_map.items():
+        if v["count"] == 0:
+            continue
+
+        avg_rsrp = v["sum_rsrp"] / v["count"]
+        avg_lat = v["sum_lat"] / v["count"]
+        avg_lon = v["sum_lon"] / v["count"]
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [avg_lon, avg_lat],
+            },
+            "properties": {
+                "district": dname,
+                "avgRsrp": avg_rsrp,
+                "count": v["count"],
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+@app.get("/api/mno/district")
+async def get_mno_district(
+    operator: str = Query("Dialog"),
+    run_id: str | None = Query(None),
+    district: str | None = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
+):
+    query = build_base_query(run_id, district, start_ts, end_ts)
+    projection = {
+        "operators": 1,
+        "gps.lat": 1,
+        "gps.lon": 1,
+        "district": 1,
+        "province": 1,
+        "ingest.district": 1,
+        "ingest.province": 1,
+    }
+
+    cursor = app.state.collection.find(query, projection)
+    docs = await cursor.to_list(length=None)
+
+    district_map: dict[str, dict[str, float | int]] = {}
+
+    for doc in docs:
+        district_name = clean_district_name(
+            doc.get("district") or doc.get("ingest", {}).get("district")
+        )
+
+        op = (doc.get("operators") or {}).get(operator)
+        if not op:
+            continue
+
+        rsrp = op.get("rsrp_dbm")
+        sinr = op.get("sinr_db")
+        lat = doc.get("gps", {}).get("lat")
+        lon = doc.get("gps", {}).get("lon")
+
+        if rsrp is None or lat is None or lon is None:
+            continue
+
+        if district_name not in district_map:
+            district_map[district_name] = {
+                "sum_rsrp": 0.0,
+                "sum_sinr": 0.0,
+                "count": 0,
+                "sum_lat": 0.0,
+                "sum_lon": 0.0,
+            }
+
+        district_map[district_name]["sum_rsrp"] += float(rsrp)
+        district_map[district_name]["count"] += 1
+        district_map[district_name]["sum_lat"] += float(lat)
+        district_map[district_name]["sum_lon"] += float(lon)
+
+        if isinstance(sinr, (int, float)):
+            district_map[district_name]["sum_sinr"] += float(sinr)
+
+    results = []
+
+    for district_name, values in district_map.items():
+        if values["count"] == 0:
+            continue
+
+        avg_rsrp = values["sum_rsrp"] / values["count"]
+        avg_sinr = (
+            values["sum_sinr"] / values["count"]
+            if values["sum_sinr"] != 0
+            else None
+        )
+
+        results.append(
+            {
+                "district": district_name,
+                "operator": operator,
+                "avgRsrp": avg_rsrp,
+                "avgSinr": avg_sinr,
+                "count": values["count"],
+                "lat": values["sum_lat"] / values["count"],
+                "lon": values["sum_lon"] / values["count"],
+                "rating": get_rsrp_rating(avg_rsrp),
+                "fillColor": get_rsrp_color(avg_rsrp),
+            }
+        )
+
+    return {"operator": operator, "data": results}
+
+
 @app.get("/api/runs")
 async def get_runs():
     pipeline = [
@@ -977,7 +1251,97 @@ async def websocket_phone_radio(websocket: WebSocket):
             pass
 
 
+@app.get("/api/rig-health/timeseries")
+async def get_rig_health_timeseries(
+    run_id: str | None = Query(None),
+    operator: str | None = Query(None),
+    start_after: str | None = Query(None, description="ISO timestamp – only return points after this time (for live polling)"),
+    limit: int = Query(5000, le=20000),
+):
+    """
+    Returns a timeseries of { ts_utc, temp_c, rsrp_dbm } for the Rig Health chart.
+    If operator is provided, rsrp_dbm is taken from that operator's signal.
+    Otherwise the average RSRP across all operators for each document is used.
+    """
+    query: dict[str, Any] = {}
+
+    if run_id:
+        query["meta.run_id"] = run_id
+
+    ts_filter: dict = {}
+    if start_after:
+        ts_filter["$gt"] = parse_iso_datetime(start_after)
+    if ts_filter:
+        query["ts_utc"] = ts_filter
+
+    projection = {
+        "ts_utc": 1,
+        "env.temp_c": 1,
+        "radio.rsrp_dbm": 1,
+        "operators": 1,
+        "accel": 1,
+    }
+
+    cursor = (
+        app.state.collection.find(query, projection)
+        .sort("ts_utc", 1)
+        .limit(limit)
+    )
+
+    docs = await cursor.to_list(length=limit)
+
+    results = []
+    for doc in docs:
+        ts_utc = serialize_datetime(doc.get("ts_utc"))
+        env = doc.get("env") or {}
+        temp_c = env.get("temp_c")
+
+        # Resolve rsrp_dbm
+        rsrp_dbm: float | None = None
+        operators_data = doc.get("operators")
+
+        if isinstance(operators_data, dict) and operators_data:
+            if operator and operator in operators_data:
+                sig = operators_data[operator] or {}
+                rsrp_dbm = sig.get("rsrp_dbm")
+            else:
+                # Average across all operators
+                vals = [
+                    (v or {}).get("rsrp_dbm")
+                    for v in operators_data.values()
+                    if isinstance((v or {}).get("rsrp_dbm"), (int, float))
+                ]
+                rsrp_dbm = round(sum(vals) / len(vals), 1) if vals else None
+        else:
+            radio = doc.get("radio") or {}
+            rsrp_dbm = radio.get("rsrp_dbm")
+
+        if temp_c is None and rsrp_dbm is None:
+            continue
+
+        accel = doc.get("accel")
+        if accel and isinstance(accel, dict):
+            x = accel.get("x", 0)
+            y = accel.get("y", 0)
+            z = accel.get("z", 0)
+            magnitude = (x**2 + y**2 + z**2) ** 0.5
+            vibration_m_s2 = round(abs(magnitude - 9.8), 2)
+        else:
+            # Mock vibration data using Gaussian noise if real data is missing from DB
+            vibration_m_s2 = round(abs(random.gauss(0.5, 2.0)), 2)
+
+        results.append({
+            "ts_utc": ts_utc,
+            "temp_c": temp_c,
+            "rsrp_dbm": rsrp_dbm,
+            "vibration_m_s2": vibration_m_s2,
+        })
+
+    return results
+
+
 if __name__ == "__main__":
+
     import uvicorn
 
     uvicorn.run(

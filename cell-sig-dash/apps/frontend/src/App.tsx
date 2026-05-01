@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
+import MnoDistrictMap from "./components/MnoDistrictMap";
+import HexMap from "./components/HexMap";
+import Layout from "./components/Layout";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
 import DataTable from "./pages/DataTable";
+import RigHealth from "./pages/RigHealth";
 
 interface DashboardPoint {
   id: string;
@@ -81,9 +86,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<
-  "dashboard" | "route-analysis" | "data-table"
->("dashboard");
+  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis" | "rig-health" | "data-table">(
+    "dashboard"
+  );
 
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
@@ -98,6 +103,9 @@ export default function App() {
     useState<OperatorFilter>("all");
   const [selectedDistrict, setSelectedDistrict] = useState("all");
   const [dateRange, setDateRange] = useState<DateRangeId>("all");
+
+  const [hexbinOperator, setHexbinOperator] = useState("Dialog");
+  const [mnoOperator, setMnoOperator] = useState("Dialog");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -312,7 +320,7 @@ export default function App() {
       province,
       weakPercent: Math.round(
         districts.reduce((sum, d) => sum + d.weakPercent, 0) /
-          districts.length
+        districts.length
       ),
       districts: districts.length,
     }));
@@ -343,8 +351,12 @@ export default function App() {
     criticalDelta: criticalDistricts - prevCriticalDistricts,
   };
 
+  if (currentPage === "rig-health") {
+    return <RigHealth currentPage={currentPage} onNavigate={setCurrentPage} />;
+  }
+
   if (currentPage === "route-analysis") {
-    return <RouteAnalysis />;
+    return <RouteAnalysis currentPage={currentPage} onNavigate={setCurrentPage} />;
   }
   if (currentPage === "data-table") {
         return <DataTable />;
@@ -352,6 +364,8 @@ export default function App() {
 
   return (
     <HomePage
+      currentPage={currentPage}
+      onNavigate={setCurrentPage}
       districtGeo={districtGeo}
       districtStats={districtStats}
       points={points}
