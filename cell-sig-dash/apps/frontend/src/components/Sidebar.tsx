@@ -2,7 +2,7 @@ import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
 
-type Page = "dashboard" | "route-analysis" | "rig-health";
+type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table";
 
 interface SidebarProps {
   currentPage: Page;
@@ -17,28 +17,27 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   useEffect(() => {
     const checkMobile = () => {
       setMobile(window.innerWidth < 768);
-      if (window.innerWidth < 768) {
-        setOpen(false);
-      } else {
-        setOpen(true);
-      }
+      setOpen(window.innerWidth >= 768);
     };
+
     checkMobile();
     window.addEventListener("resize", checkMobile);
+
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
 
   const menuItems: { icon: string; label: string; page: Page }[] = [
     { icon: "🏠", label: "Overview", page: "dashboard" },
     { icon: "🗺️", label: "Route Analysis", page: "route-analysis" },
     { icon: "🌡️", label: "Rig Health", page: "rig-health" },
+    { icon: "📈", label: "Data Table", page: "data-table" },
   ];
 
   const disabledItems = ["MNO Benchmark", "Data Table", "Settings"];
 
   return (
     <>
-      {/* Mobile Overlay */}
       {mobile && open && (
         <div
           onClick={() => setOpen(false)}
@@ -55,7 +54,6 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
         />
       )}
 
-      {/* Sidebar */}
       <div
         style={{
           position: mobile ? "fixed" : "relative",
@@ -72,7 +70,6 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           boxShadow: colors.shadow,
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: "20px 16px",
@@ -103,6 +100,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                   style={{ width: 50, height: 50, objectFit: "contain" }}
                 />
               </div>
+
               <h3
                 style={{
                   margin: 0,
@@ -117,7 +115,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               </h3>
             </div>
           )}
+
           <button
+            type="button"
             onClick={() => setOpen(!open)}
             style={{
               background: "transparent",
@@ -143,7 +143,6 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           </button>
         </div>
 
-        {/* Navigation Items */}
         <div style={{ flex: 1, padding: "12px 0" }}>
           {open && (
             <div
@@ -230,7 +229,6 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           ))}
         </div>
 
-        {/* Theme Selector */}
         <div
           style={{
             padding: "16px",
@@ -242,8 +240,10 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
               APPEARANCE
             </div>
           )}
+
           <div style={{ display: "flex", gap: 8, flexDirection: open ? "row" : "column" }}>
             <button
+              type="button"
               onClick={() => setTheme("dark")}
               style={{
                 flex: 1,
@@ -263,7 +263,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             >
               {open ? "🌙 Dark" : "🌙"}
             </button>
+
             <button
+              type="button"
               onClick={() => setTheme("light")}
               style={{
                 flex: 1,
@@ -283,7 +285,9 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             >
               {open ? "☀️ Light" : "☀️"}
             </button>
+
             <button
+              type="button"
               onClick={() => setTheme("colorblind")}
               style={{
                 flex: 1,
