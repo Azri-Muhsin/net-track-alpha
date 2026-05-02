@@ -7,6 +7,7 @@ interface DashboardPoint {
   ts_utc: string;
   operator: string;
   rsrp_dbm: number | null;
+  rsrq_db?: number | null;
   sinr_db: number | null;
   lat: number | null;
   lon: number | null;
@@ -24,7 +25,7 @@ interface DistrictStat {
 }
 
 interface Props {
-  geoJson: any;
+  geoJson?: any;
   districtStats: DistrictStat[];
   points: DashboardPoint[];
   selectedDistrict: string;
@@ -35,31 +36,83 @@ interface Props {
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
 
-function getDistrictName(feature: any) {
-  const raw =
-    feature.properties.shapeName ||
-    feature.properties.NAME_2 ||
-    feature.properties.district ||
-    feature.properties.name ||
-    "Unknown";
+const DISTRICT_TILESET_URL = import.meta.env
+  .VITE_MAPBOX_DISTRICT_TILESET_URL as string | undefined;
 
-  return raw.replace(" District", "").trim();
-}
+const DISTRICT_SOURCE_LAYER =
+  (import.meta.env.VITE_MAPBOX_DISTRICT_SOURCE_LAYER as string | undefined) ||
+  "polygon";
+
+const DISTRICT_NAME_PROPERTY =
+  (import.meta.env.VITE_MAPBOX_DISTRICT_NAME_PROPERTY as string | undefined) ||
+  "shapeName";
 
 function cleanName(name: string) {
-  return name.replace(" District", "").trim().toLowerCase();
+  return String(name || "")
+    .replace(/district/gi, "")
+    .trim()
+    .toLowerCase();
 }
 
-function getWeakColor(weakPercent: number, totalSamples: number) {
-  if (!totalSamples) return "#374151";
-  if (weakPercent > 45) return "#ef4444";
-  if (weakPercent > 25) return "#f97316";
-  if (weakPercent > 10) return "#facc15";
+function titleCaseDistrict(name: string) {
+  return cleanName(name)
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function getDistrictColor(d: DistrictStat) {
+  if (!d || d.totalSamples === 0) return "#374151";
+  if (d.weakPercent > 45) return "#ef4444";
+  if (d.weakPercent > 25) return "#f97316";
+  if (d.weakPercent > 10) return "#facc15";
   return "#22c55e";
 }
 
+function getDistrictNameFromFeature(feature: any) {
+  const p = feature?.properties ?? {};
+
+  const raw =
+    p[DISTRICT_NAME_PROPERTY] ||
+    p.shapeName ||
+    p.districtName ||
+    p.NAME_2 ||
+    p.district ||
+    p.name ||
+    "Unknown";
+
+  return String(raw).replace(/district/gi, "").trim();
+}
+
+function getDistrictFillColorExpression(districtStats: DistrictStat[]) {
+  if (!districtStats || districtStats.length === 0) {
+    return "#374151";
+  }
+
+  const expression: any[] = ["match", ["get", DISTRICT_NAME_PROPERTY]];
+
+  const used = new Set<string>();
+
+  districtStats.forEach((d) => {
+    const color = getDistrictColor(d);
+
+    // FORCE exact match to GeoJSON
+    const key = `${d.districtName.trim()} District`;
+
+    if (!used.has(key)) {
+      expression.push(key);
+      expression.push(color);
+      used.add(key);
+    }
+  });
+
+  expression.push("#374151");
+
+  return expression;
+}
+
 export default function MapBoxCoverageMap({
-  geoJson,
   districtStats,
   points,
   selectedDistrict,
@@ -70,7 +123,24 @@ export default function MapBoxCoverageMap({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const popupRef = useRef<mapboxgl.Popup | null>(null);
+
+  const districtStatsByNameRef = useRef<Map<string, DistrictStat>>(new Map());
+
   const [mapLoaded, setMapLoaded] = useState(false);
+
+  const districtStatsByName = useMemo(() => {
+    const map = new Map<string, DistrictStat>();
+
+    districtStats.forEach((d) => {
+      map.set(cleanName(d.districtName), d);
+    });
+
+    return map;
+  }, [districtStats]);
+
+  useEffect(() => {
+    districtStatsByNameRef.current = districtStatsByName;
+  }, [districtStatsByName]);
 
   const validPoints = useMemo(() => {
     return points
@@ -87,66 +157,25 @@ export default function MapBoxCoverageMap({
       );
   }, [points]);
 
-  const districtStatsByName = useMemo(() => {
-    const map = new Map<string, DistrictStat>();
-    districtStats.forEach((d) => map.set(cleanName(d.districtName), d));
-    return map;
-  }, [districtStats]);
-
-  const districtGeoJson = useMemo(() => {
-    if (!geoJson?.features) {
-      return { type: "FeatureCollection", features: [] };
-    }
-
-    return {
-      type: "FeatureCollection",
-      features: geoJson.features.map((feature: any) => {
-        const districtName = getDistrictName(feature);
-        const stat = districtStatsByName.get(cleanName(districtName));
-
-        return {
-          ...feature,
-          properties: {
-            ...feature.properties,
-            districtName,
-            province: stat?.province ?? "Sri Lanka",
-            totalSamples: stat?.totalSamples ?? 0,
-            weakPercent: stat?.weakPercent ?? 0,
-            avgRsrp: stat?.avgRsrp ?? null,
-            medianRsrp: stat?.medianRsrp ?? null,
-            avgRsrq: stat?.avgRsrq ?? null,
-            avgSinr: stat?.avgSinr ?? null,
-            fillColor: getWeakColor(
-              stat?.weakPercent ?? 0,
-              stat?.totalSamples ?? 0
-            ),
-            isSelected:
-              selectedDistrict !== "All Districts" &&
-              cleanName(selectedDistrict) === cleanName(districtName),
-          },
-        };
-      }),
-    };
-  }, [geoJson, districtStatsByName, selectedDistrict]);
-
   const pointGeoJson = useMemo(() => {
     return {
       type: "FeatureCollection",
       features: showRoute
         ? validPoints.map((p) => ({
-            type: "Feature",
-            geometry: {
-              type: "Point",
-              coordinates: [p.lon, p.lat],
-            },
-            properties: {
-              id: p.id,
-              operator: p.operator,
-              rsrp_dbm: p.rsrp_dbm,
-              sinr_db: p.sinr_db,
-              ts_utc: p.ts_utc,
-            },
-          }))
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [p.lon, p.lat],
+          },
+          properties: {
+            id: p.id,
+            operator: p.operator,
+            rsrp_dbm: p.rsrp_dbm,
+            rsrq_db: p.rsrq_db ?? null,
+            sinr_db: p.sinr_db,
+            ts_utc: p.ts_utc,
+          },
+        }))
         : [],
     };
   }, [validPoints, showRoute]);
@@ -159,15 +188,15 @@ export default function MapBoxCoverageMap({
       features:
         coordinates.length >= 2
           ? [
-              {
-                type: "Feature",
-                geometry: {
-                  type: "LineString",
-                  coordinates,
-                },
-                properties: {},
+            {
+              type: "Feature",
+              geometry: {
+                type: "LineString",
+                coordinates,
               },
-            ]
+              properties: {},
+            },
+          ]
           : [],
     };
   }, [validPoints, showRoute]);
@@ -200,7 +229,12 @@ export default function MapBoxCoverageMap({
 
   useEffect(() => {
     if (!MAPBOX_TOKEN) {
-      console.error("Missing VITE_MAPBOX_TOKEN in apps/frontend/.env");
+      console.error("Missing VITE_MAPBOX_TOKEN in .env");
+      return;
+    }
+
+    if (!DISTRICT_TILESET_URL) {
+      console.error("Missing VITE_MAPBOX_DISTRICT_TILESET_URL in .env");
       return;
     }
 
@@ -220,24 +254,26 @@ export default function MapBoxCoverageMap({
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
+    map.on("error", (e: any) => {
+      console.error("Mapbox error event:", e);
+      console.error("Mapbox error message:", e?.error?.message);
+      console.error("Mapbox error stack:", e?.error?.stack);
+    });
+
     map.on("load", () => {
       map.addSource("districts", {
-        type: "geojson",
-        data: districtGeoJson as any,
+        type: "vector",
+        url: DISTRICT_TILESET_URL,
       });
 
       map.addLayer({
         id: "district-fills",
         type: "fill",
         source: "districts",
+        "source-layer": DISTRICT_SOURCE_LAYER,
         paint: {
-          "fill-color": ["get", "fillColor"],
-          "fill-opacity": [
-            "case",
-            ["boolean", ["get", "isSelected"], false],
-            showRoute ? 0.2 : 0.55,
-            showRoute ? 0.12 : 0.55,
-          ],
+          "fill-color": getDistrictFillColorExpression(districtStats) as any,
+          "fill-opacity": showRoute ? 0.15 : 0.65,
         },
       });
 
@@ -245,14 +281,10 @@ export default function MapBoxCoverageMap({
         id: "district-borders",
         type: "line",
         source: "districts",
+        "source-layer": DISTRICT_SOURCE_LAYER,
         paint: {
           "line-color": "#ffffff",
-          "line-width": [
-            "case",
-            ["boolean", ["get", "isSelected"], false],
-            2.5,
-            0.8,
-          ],
+          "line-width": 0.8,
           "line-opacity": showRoute ? 0.45 : 0.9,
         },
       });
@@ -310,8 +342,15 @@ export default function MapBoxCoverageMap({
 
       map.on("click", "district-fills", (e) => {
         const feature = e.features?.[0];
-        const name = feature?.properties?.districtName;
-        if (name) onSelectDistrict(name);
+        if (!feature) return;
+
+        console.log("Clicked district properties:", feature.properties);
+
+        const districtName = getDistrictNameFromFeature(feature);
+
+        if (districtName && districtName !== "Unknown") {
+          onSelectDistrict(districtName);
+        }
       });
 
       map.on("mousemove", "district-fills", (e) => {
@@ -320,31 +359,34 @@ export default function MapBoxCoverageMap({
         const feature = e.features?.[0];
         if (!feature || !e.lngLat) return;
 
-        const p = feature.properties as any;
+        const districtName = getDistrictNameFromFeature(feature);
+        const stat = districtStatsByNameRef.current.get(cleanName(districtName));
 
         popupRef.current?.remove();
 
         popupRef.current = new mapboxgl.Popup({
           closeButton: false,
           closeOnClick: false,
+          offset: 12,
         })
           .setLngLat(e.lngLat)
           .setHTML(`
             <div style="
               font-family: Inter, sans-serif;
               color: #111827;
-              min-width: 170px;
+              min-width: 180px;
               font-size: 13px;
               line-height: 1.6;
             ">
-              <strong style="font-size: 14px;">${p.districtName}</strong><br/>
-              <span>Avg RSRP: <strong>${p.avgRsrp ?? "N/A"} dBm</strong></span><br/>
-              <span>Avg RSRQ: <strong>${p.avgRsrq ?? "N/A"} dB</strong></span><br/>
-              <span>Avg SINR: <strong>${p.avgSinr ?? "N/A"} dB</strong></span><br/>
-              <span>Weak: <strong>${p.weakPercent}%</strong></span><br/>
-              <span>Samples: <strong>${p.totalSamples}</strong></span>
+              <strong style="font-size: 14px;">${districtName}</strong><br/>
+              <span>Avg RSRP: <strong>${stat?.avgRsrp ?? "N/A"} dBm</strong></span><br/>
+              <span>Avg RSRQ: <strong>${stat?.avgRsrq ?? "N/A"} dB</strong></span><br/>
+              <span>Avg SINR: <strong>${stat?.avgSinr ?? "N/A"} dB</strong></span><br/>
+              <span>Weak: <strong>${stat?.weakPercent ?? 0}%</strong></span><br/>
+              <span>Samples: <strong>${stat?.totalSamples ?? 0}</strong></span>
             </div>
           `)
+          .addTo(map);
       });
 
       map.on("mouseleave", "district-fills", () => {
@@ -360,7 +402,9 @@ export default function MapBoxCoverageMap({
 
         const p = feature.properties as any;
 
-        new mapboxgl.Popup()
+        new mapboxgl.Popup({
+          offset: 12,
+        })
           .setLngLat(e.lngLat)
           .setHTML(`
             <div style="
@@ -370,16 +414,14 @@ export default function MapBoxCoverageMap({
               font-size: 13px;
               line-height: 1.6;
             ">
-              <strong style="font-size: 14px;">${p.districtName}</strong><br/>
-              <span>Avg RSRP: <strong>${p.avgRsrp ?? "N/A"} dBm</strong></span><br/>
-              <span>Avg RSRQ: <strong>${p.avgRsrq ?? "N/A"} dB</strong></span><br/>
-              <span>Avg SINR: <strong>${p.avgSinr ?? "N/A"} dB</strong></span><br/>
-              <span>Weak: <strong>${p.weakPercent}%</strong></span><br/>
-              <span>Samples: <strong>${p.totalSamples}</strong></span>
+              <strong style="font-size: 14px;">${p.operator ?? "Unknown operator"}</strong><br/>
+              <span>RSRP: <strong>${p.rsrp_dbm ?? "N/A"} dBm</strong></span><br/>
+              <span>RSRQ: <strong>${p.rsrq_db ?? "N/A"} dB</strong></span><br/>
+              <span>SINR: <strong>${p.sinr_db ?? "N/A"} dB</strong></span><br/>
+              <span>Time: <strong>${p.ts_utc ?? "N/A"}</strong></span>
             </div>
-            `)
-            .addTo(map);
-          
+          `)
+          .addTo(map);
       });
 
       map.resize();
@@ -400,9 +442,28 @@ export default function MapBoxCoverageMap({
     const map = mapRef.current;
     if (!map) return;
 
-    const source = map.getSource("districts") as GeoJSONSource | undefined;
-    source?.setData(districtGeoJson as any);
-  }, [mapLoaded, districtGeoJson]);
+    if (map.getLayer("district-fills")) {
+      map.setPaintProperty(
+        "district-fills",
+        "fill-color",
+        getDistrictFillColorExpression(districtStats) as any
+      );
+
+      map.setPaintProperty(
+        "district-fills",
+        "fill-opacity",
+        showRoute ? 0.15 : 0.65
+      );
+    }
+
+    if (map.getLayer("district-borders")) {
+      map.setPaintProperty(
+        "district-borders",
+        "line-opacity",
+        showRoute ? 0.45 : 0.9
+      );
+    }
+  }, [mapLoaded, districtStats, showRoute]);
 
   useEffect(() => {
     if (!mapLoaded) return;
@@ -410,7 +471,9 @@ export default function MapBoxCoverageMap({
     const map = mapRef.current;
     if (!map) return;
 
-    const pointsSource = map.getSource("drive-points") as GeoJSONSource | undefined;
+    const pointsSource = map.getSource("drive-points") as
+      | GeoJSONSource
+      | undefined;
     pointsSource?.setData(pointGeoJson as any);
 
     const routeSource = map.getSource("route-line") as GeoJSONSource | undefined;

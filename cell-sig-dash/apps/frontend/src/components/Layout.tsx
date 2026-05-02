@@ -1,7 +1,12 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
 
-type Page = "dashboard" | "route-analysis" | "rig-health";
+type Page =
+  | "dashboard"
+  | "route-analysis"
+  | "rig-health"
+  | "data-table"
+  | "mno-benchmark";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -22,8 +27,7 @@ export default function Layout({
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <Sidebar currentPage={currentPage} onNavigate={onNavigate} />
-
+     <Sidebar currentPage={currentPage} onNavigate={onNavigate} />
       <div style={{ flex: 1, overflow: "auto" }}>
         <div
           style={{

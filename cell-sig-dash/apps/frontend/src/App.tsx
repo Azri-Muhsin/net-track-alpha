@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import MapBoxCoverageMap from "./components/MapBoxCoverageMap";
+import MnoDistrictMap from "./components/MnoDistrictMap";
+import HexMap from "./components/HexMap";
+import Layout from "./components/Layout";
 
 import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
+import DataTable from "./pages/DataTable";
 import RigHealth from "./pages/RigHealth";
+import MnoBenchmark from "./pages/MnoBenchmark";
 
 interface DashboardPoint {
   id: string;
@@ -81,9 +87,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis" | "rig-health">(
-    "dashboard"
-  );
+  const [currentPage, setCurrentPage] = useState<
+    "dashboard" | "route-analysis" | "rig-health" | "data-table" | "mno-benchmark"
+  >("dashboard");
 
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
@@ -97,7 +103,10 @@ export default function App() {
   const [selectedOperator, setSelectedOperator] =
     useState<OperatorFilter>("all");
   const [selectedDistrict, setSelectedDistrict] = useState("all");
-  const [dateRange, setDateRange] = useState<DateRangeId>("7d");
+  const [dateRange, setDateRange] = useState<DateRangeId>("all");
+
+  const [hexbinOperator, setHexbinOperator] = useState("Dialog");
+  const [mnoOperator, setMnoOperator] = useState("Dialog");
   const [threshold, setThreshold] = useState(-110);
 
   const [apiError, setApiError] = useState<string | null>(null);
@@ -248,6 +257,33 @@ export default function App() {
     fetchDashboardData();
   }, [selectedRunId, selectedOperator, selectedDistrict, threshold, dateRange]);
 
+  useEffect(() => {
+    const handleSidebarClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      const clickedItem = target.closest("div");
+      const text = clickedItem?.textContent?.trim();
+
+      if (text?.includes("Route Analysis")) {
+        setCurrentPage("route-analysis");
+      }
+
+      if (text?.includes("Overview")) {
+        setCurrentPage("dashboard");
+      }
+      if (text?.includes("Data Table")) {
+        setCurrentPage("data-table");
+      }
+      if (text?.includes("MNO Benchmark")) {
+        setCurrentPage("mno-benchmark");
+      }
+    };
+
+    document.addEventListener("click", handleSidebarClick);
+
+    return () => {
+      document.removeEventListener("click", handleSidebarClick);
+    };
+  }, []);
 
   const districtStats = summary?.district_stats ?? [];
 
@@ -326,6 +362,18 @@ export default function App() {
   if (currentPage === "route-analysis") {
     return <RouteAnalysis currentPage={currentPage} onNavigate={setCurrentPage} />;
   }
+  if (currentPage === "data-table") {
+        return <DataTable />;
+      }
+  if (currentPage === "mno-benchmark") {
+  return (
+    <MnoBenchmark
+      currentPage={currentPage}
+      onNavigate={setCurrentPage}
+      districtGeo={districtGeo}
+    />
+  );
+}
 
   return (
     <HomePage
