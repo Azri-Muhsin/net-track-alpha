@@ -425,6 +425,47 @@ export default function MapBoxCoverageMap({
           .addTo(map);
       });
 
+      map.on("mousemove", "drive-points-layer", (e) => {
+        if (!showRoute) return;
+
+        map.getCanvas().style.cursor = "pointer";
+
+        const feature = e.features?.[0];
+        if (!feature || !e.lngLat) return;
+
+        const p = feature.properties as any;
+
+        popupRef.current?.remove();
+
+        popupRef.current = new mapboxgl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 12,
+        })
+          .setLngLat(e.lngLat)
+          .setHTML(`
+            <div style="
+              font-family: Inter, sans-serif;
+              color: #111827;
+              min-width: 170px;
+              font-size: 13px;
+              line-height: 1.6;
+            ">
+              <strong style="font-size: 14px;">${p.operator ?? "Unknown operator"}</strong><br/>
+              <span>RSRP: <strong>${p.rsrp_dbm ?? "N/A"} dBm</strong></span><br/>
+              <span>RSRQ: <strong>${p.rsrq_db ?? "N/A"} dB</strong></span><br/>
+              <span>SINR: <strong>${p.sinr_db ?? "N/A"} dB</strong></span><br/>
+              <span>Time: <strong>${p.ts_utc ?? "N/A"}</strong></span>
+            </div>
+          `)
+    .addTo(map);
+});
+
+map.on("mouseleave", "drive-points-layer", () => {
+  map.getCanvas().style.cursor = "";
+  popupRef.current?.remove();
+});
+
       map.resize();
       setMapLoaded(true);
     });
