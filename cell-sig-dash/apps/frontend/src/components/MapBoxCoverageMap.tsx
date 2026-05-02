@@ -292,7 +292,7 @@ export default function MapBoxCoverageMap({
           visibility: showRoute ? "visible" : "none",
         },
         paint: {
-          "circle-radius": 6,
+          "circle-radius": 4,
           "circle-color": [
             "case",
             ["<=", ["get", "rsrp_dbm"], -110],
@@ -304,8 +304,7 @@ export default function MapBoxCoverageMap({
             "#22c55e",
           ],
           "circle-opacity": 0.95,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
+          "circle-stroke-width": 0,
         },
       });
 
