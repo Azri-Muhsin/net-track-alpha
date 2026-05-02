@@ -1,6 +1,7 @@
 import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
+import logo_2 from "../assets/Untitled Diagram.drawio.png";
 
 type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table" |"mno-benchmark";
 
@@ -96,8 +97,8 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                 }}
               >
                 <img
-                  src={logo}
-                  alt="logo"
+                  src={logo_2}
+                  alt="logo_2"
                   style={{ width: 50, height: 50, objectFit: "contain" }}
                 />
               </div>
