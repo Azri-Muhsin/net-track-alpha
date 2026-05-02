@@ -1,136 +1,62 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
-import { latLngToCell, cellToBoundary } from "h3-js";
-
 import "mapbox-gl/dist/mapbox-gl.css";
 
-const MAPBOX_TOKEN = (import.meta as any).env?.VITE_MAPBOX_TOKEN ?? "";
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:8000";
+const TOKEN = (import.meta as any).env?.VITE_MAPBOX_TOKEN ?? "";
+const API = (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:8000";
 
-const H3_RESOLUTION = 10;
+const TILESET = (import.meta as any).env?.VITE_MAPBOX_DISTRICT_TILESET_URL;
+const SOURCE_LAYER = (import.meta as any).env?.VITE_MAPBOX_DISTRICT_SOURCE_LAYER;
+const NAME_PROP = (import.meta as any).env?.VITE_MAPBOX_DISTRICT_NAME_PROPERTY;
 
-interface RawFeature {
-  type: "Feature";
-  geometry: { type: "Point"; coordinates: [number, number] };
-  properties: {
-    rsrp?: number;
-    sinr?: number;
-  };
+// ---------------- TYPES ----------------
+type FeatureState = {
+  avg?: number;
+  count?: number;
+  color?: string;
+};
+
+// ---------------- HELPERS ----------------
+function clean(name: string) {
+  return name?.replace(" District", "").trim().toLowerCase();
 }
 
-// ---------------- COLORS ----------------
-function rsrpToColor(rsrp: number) {
-  if (rsrp >= -70) return "#1a9850";
-  if (rsrp >= -80) return "#66bd63";
-  if (rsrp >= -90) return "#fee08b";
-  if (rsrp >= -100) return "#fc8d59";
-  if (rsrp >= -110) return "#f46d43";
+function getColor(r: number | null) {
+  if (r == null) return "#374151";
+  if (r >= -70) return "#1a9850";
+  if (r >= -80) return "#66bd63";
+  if (r >= -90) return "#fee08b";
+  if (r >= -100) return "#fc8d59";
+  if (r >= -110) return "#f46d43";
   return "#d73027";
 }
 
-// ---------------- H3 GRID ----------------
-function buildH3(features: RawFeature[]) {
-  const bins = new Map<string, number[]>();
-
-  for (const f of features ?? []) {
-    if (!f?.geometry) continue;
-
-    const [lon, lat] = f.geometry.coordinates;
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-
-    const cell = latLngToCell(lat, lon, H3_RESOLUTION);
-
-    if (!bins.has(cell)) bins.set(cell, []);
-    if (f.properties?.rsrp != null) bins.get(cell)!.push(f.properties.rsrp);
-  }
-
-  const out: any[] = [];
-
-  for (const [cell, values] of bins.entries()) {
-    const boundary = cellToBoundary(cell).map(([lat, lng]) => [lng, lat]);
-    boundary.push(boundary[0]);
-
-    const avg =
-      values.reduce((a, b) => a + b, 0) / values.length;
-
-    out.push({
-      type: "Feature",
-      geometry: {
-        type: "Polygon",
-        coordinates: [boundary],
-      },
-      properties: {
-        avgRsrp: avg,
-        count: values.length,
-        color: rsrpToColor(avg),
-      },
-    });
-  }
-
-  return {
-    type: "FeatureCollection",
-    features: out,
-  };
-}
-
 // ---------------- COMPONENT ----------------
-export default function HexMap({ operator = "Dialog" }: { operator?: string }) {
+export default function DistrictHexMap({ operator = "Dialog" }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const rawData = useRef<RawFeature[]>([]);
   const [loading, setLoading] = useState(false);
 
   // ---------------- FETCH ----------------
   const fetchData = useCallback(async () => {
-    const res = await fetch(
-      `${API_BASE}/api/hexbin/district?operator=${operator}`
-    );
-
-    const data = await res.json();
-    console.log("HEX API:", data.features?.length);
-
-    return data.features ?? [];
+    const res = await fetch(`${API}/api/hexbin/district?operator=${operator}`);
+    const json = await res.json();
+    return json.features ?? [];
   }, [operator]);
-
-  // ---------------- UPDATE MAP ----------------
-  const updateMap = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    if (!map.isStyleLoaded()) {
-      console.warn("Style not ready");
-      return;
-    }
-
-    const source = map.getSource("hexbins") as mapboxgl.GeoJSONSource;
-    if (!source) {
-      console.warn("Source missing");
-      return;
-    }
-
-    const geojson = buildH3(rawData.current);
-
-    requestAnimationFrame(() => {
-      source.setData(geojson as any);
-    });
-  }, []);
 
   // ---------------- INIT MAP ----------------
   useEffect(() => {
-    if (!containerRef.current) return;
-    if (!MAPBOX_TOKEN) return;
+    if (!ref.current || !TOKEN) return;
 
-    // 🔥 FIX: prevent duplicate maps (VERY IMPORTANT)
+    mapboxgl.accessToken = TOKEN;
+
     if (mapRef.current) {
       mapRef.current.remove();
       mapRef.current = null;
     }
 
-    mapboxgl.accessToken = MAPBOX_TOKEN;
-
     const map = new mapboxgl.Map({
-      container: containerRef.current,
+      container: ref.current,
       style: "mapbox://styles/mapbox/dark-v11",
       center: [80.7718, 7.8731],
       zoom: 7,
@@ -139,75 +65,139 @@ export default function HexMap({ operator = "Dialog" }: { operator?: string }) {
     mapRef.current = map;
 
     map.on("load", async () => {
-      console.log("MAP LOADED");
+      console.log("✅ MAP LOADED");
 
-      map.addSource("hexbins", {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: [],
+      // 🔥 VECTOR TILESET
+      map.addSource("districts", {
+        type: "vector",
+        url: TILESET,
+        promoteId: NAME_PROP, // VERY IMPORTANT
+      });
+
+      // 🔥 FILL
+      map.addLayer({
+        id: "district-fill",
+        type: "fill",
+        source: "districts",
+        "source-layer": SOURCE_LAYER,
+        paint: {
+          "fill-color": [
+            "coalesce",
+            ["feature-state", "color"],
+            "#374151",
+          ],
+          "fill-opacity": 0.8,
         },
       });
 
+      // 🔥 BORDER
       map.addLayer({
-        id: "hex-fill",
-        type: "fill",
-        source: "hexbins",
+        id: "district-border",
+        type: "line",
+        source: "districts",
+        "source-layer": SOURCE_LAYER,
         paint: {
-          "fill-color": ["get", "color"],
-          "fill-opacity": 0.85,
+          "line-color": "#ffffff",
+          "line-width": 1,
         },
       });
 
       setLoading(true);
 
       const data = await fetchData();
-      rawData.current = data;
 
-      setTimeout(() => {
-        updateMap();
-        map.resize(); // 🔥 FIX: ensures rendering
+      const stats = new Map<string, { avg: number; count: number }>();
+
+      data.forEach((f: any) => {
+        stats.set(clean(f.properties.district), {
+          avg: f.properties.avgRsrp,
+          count: f.properties.count,
+        });
+      });
+
+      // 🔥 WAIT UNTIL TILES ARE READY
+      map.once("idle", () => {
+        const features = map.querySourceFeatures("districts", {
+          sourceLayer: SOURCE_LAYER,
+        });
+
+        console.log("Tileset features:", features.length);
+
+        features.forEach((f) => {
+          const nameRaw = f.properties?.[NAME_PROP];
+          const id = f.id as string | number;
+
+          if (!nameRaw || id == null) return;
+
+          const name = clean(nameRaw);
+          const stat = stats.get(name);
+
+          map.setFeatureState(
+            {
+              source: "districts",
+              sourceLayer: SOURCE_LAYER,
+              id: id, // ✅ FIXED (real ID)
+            },
+            {
+              color: getColor(stat?.avg ?? null),
+              avg: stat?.avg ?? null,
+              count: stat?.count ?? 0,
+            } as FeatureState
+          );
+        });
+
         setLoading(false);
-      }, 300);
+      });
+
+      // ---------------- POPUP ----------------
+      map.on("click", "district-fill", (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+
+        const id = f.id as string | number;
+        if (id == null) return;
+
+        const state = map.getFeatureState({
+          source: "districts",
+          sourceLayer: SOURCE_LAYER,
+          id,
+        }) as FeatureState;
+
+        const avg =
+          typeof state?.avg === "number"
+            ? state.avg.toFixed(1)
+            : "N/A";
+
+        new mapboxgl.Popup()
+          .setLngLat(e.lngLat)
+          .setHTML(`
+            <div>
+              <strong>${f.properties?.[NAME_PROP]}</strong><br/>
+              Avg RSRP: ${avg} dBm<br/>
+              Samples: ${state?.count ?? 0}
+            </div>
+          `)
+          .addTo(map);
+      });
+
+      map.resize();
     });
 
     return () => {
       map.remove();
       mapRef.current = null;
     };
-  }, [fetchData, updateMap]);
+  }, [fetchData]);
 
-  // ---------------- UPDATE ON CHANGE ----------------
-  useEffect(() => {
-    if (!mapRef.current) return;
-
-    (async () => {
-      setLoading(true);
-
-      rawData.current = await fetchData();
-
-      setTimeout(() => {
-        updateMap();
-        setLoading(false);
-      }, 200);
-    })();
-  }, [operator, fetchData, updateMap]);
-
-  // ---------------- UI ----------------
   return (
-    <div style={{ position: "relative", width: "100%" }}>
-      {/* 🔥 CRITICAL FIX: forced visible container */}
+    <div style={{ position: "relative" }}>
       <div
-        ref={containerRef}
+        ref={ref}
         style={{
           width: "100%",
-          height: "620px",
-          minHeight: "620px",
-          position: "relative",
-          zIndex: 1,
+          height: "650px",
           background: "#111",
           borderRadius: "12px",
-          overflow: "hidden",
         }}
       />
 
@@ -219,13 +209,11 @@ export default function HexMap({ operator = "Dialog" }: { operator?: string }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "rgba(0,0,0,0.5)",
             color: "white",
-            fontWeight: 600,
-            zIndex: 2,
+            background: "rgba(0,0,0,0.5)",
           }}
         >
-          Loading Hex Grid...
+          Loading District Data...
         </div>
       )}
     </div>

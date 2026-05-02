@@ -2,6 +2,7 @@ import { useState } from "react";
 import Layout from "../components/Layout";
 import MnoDistrictMap from "../components/MnoDistrictMap";
 import MnoDistrictTable from "../components/MnoDistrictTable";
+import HexMap from "../components/HexMap";
 import { useTheme } from "../lib/ThemeContext";
 
 type Page =
@@ -116,6 +117,20 @@ export default function MnoBenchmark({
         <section className="map-card" style={cardStyle}>
           <MnoDistrictTable operator={mnoOperator} />
         </section>
+
+        {/* <section className="map-card" style={cardStyle}>
+          <div className="section-title">
+            <div>
+              <h2 style={{ color: colors.text }}>Signal Coverage (Hexbin)</h2>
+              <p style={muted}>
+                Fine-grained signal distribution using hexagonal binning
+              </p>
+            </div>
+          </div>
+
+          <HexMap />
+        </section> */}
+
       </div>
     </Layout>
   );

@@ -307,7 +307,7 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
                 gap: 6,
               }}
             >
-              {open ? "🎨 Colorblind" : "🎨"}
+              {open ? "🎨 Contrast" : "🎨"}
             </button>
           </div>
         </div>
