@@ -2,7 +2,7 @@ import { useTheme } from "../lib/ThemeContext";
 import { useState, useEffect } from "react";
 import logo from "../assets/NetTrack_png.png";
 
-type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table";
+type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table" |"mno-benchmark";
 
 interface SidebarProps {
   currentPage: Page;
@@ -32,9 +32,10 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { icon: "🗺️", label: "Route Analysis", page: "route-analysis" },
     { icon: "🌡️", label: "Rig Health", page: "rig-health" },
     { icon: "📈", label: "Data Table", page: "data-table" },
+    { icon: "📊", label: "MNO Benchmark", page: "mno-benchmark" },
   ];
 
-  const disabledItems = ["MNO Benchmark", "Data Table", "Settings"];
+  const disabledItems = ["Settings"];
 
   return (
     <>

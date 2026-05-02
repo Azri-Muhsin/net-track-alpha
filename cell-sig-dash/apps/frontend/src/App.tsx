@@ -9,6 +9,7 @@ import RouteAnalysis from "./pages/RouteAnalysis";
 import HomePage from "./pages/HomePage";
 import DataTable from "./pages/DataTable";
 import RigHealth from "./pages/RigHealth";
+import MnoBenchmark from "./pages/MnoBenchmark";
 
 interface DashboardPoint {
   id: string;
@@ -86,9 +87,9 @@ function dateRangeToStartTs(range: DateRangeId) {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<"dashboard" | "route-analysis" | "rig-health" | "data-table">(
-    "dashboard"
-  );
+  const [currentPage, setCurrentPage] = useState<
+    "dashboard" | "route-analysis" | "rig-health" | "data-table" | "mno-benchmark"
+  >("dashboard");
 
   const [districtGeo, setDistrictGeo] = useState<any>(null);
   const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
@@ -272,6 +273,9 @@ export default function App() {
       if (text?.includes("Data Table")) {
         setCurrentPage("data-table");
       }
+      if (text?.includes("MNO Benchmark")) {
+        setCurrentPage("mno-benchmark");
+      }
     };
 
     document.addEventListener("click", handleSidebarClick);
@@ -361,6 +365,15 @@ export default function App() {
   if (currentPage === "data-table") {
         return <DataTable />;
       }
+  if (currentPage === "mno-benchmark") {
+  return (
+    <MnoBenchmark
+      currentPage={currentPage}
+      onNavigate={setCurrentPage}
+      districtGeo={districtGeo}
+    />
+  );
+}
 
   return (
     <HomePage

@@ -1,7 +1,12 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
 
-type Page = "dashboard" | "route-analysis" | "rig-health" | "data-table";
+type Page =
+  | "dashboard"
+  | "route-analysis"
+  | "rig-health"
+  | "data-table"
+  | "mno-benchmark";
 
 interface LayoutProps {
   children: React.ReactNode;
