@@ -1,5 +1,7 @@
 import Sidebar from "./Sidebar";
 import { useTheme } from "../lib/ThemeContext";
+import ChatbotPanel from "./ChatbotPanel";
+import { useState } from "react";
 
 type Page =
   | "dashboard"
@@ -24,6 +26,8 @@ export default function Layout({
   onNavigate,
 }: LayoutProps) {
   const { colors } = useTheme();
+
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
@@ -54,6 +58,33 @@ export default function Layout({
 
             <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
               {topbarRight}
+
+              <button
+                onClick={() => setChatOpen((prev) => !prev)}
+                style={{
+                  background: chatOpen
+                    ? colors.accent
+                    : "transparent",
+                  border: `1px solid ${colors.border}`,
+                  color: chatOpen ? "#fff" : colors.text,
+                  fontSize: 14,
+                  cursor: "pointer",
+                  padding: "8px 14px",
+                  borderRadius: 10,
+                  transition: "all 0.2s",
+                  fontWeight: 600,
+                }}
+                onMouseEnter={(e) => {
+                  if (!chatOpen)
+                    e.currentTarget.style.background = colors.cardHover;
+                }}
+                onMouseLeave={(e) => {
+                  if (!chatOpen)
+                    e.currentTarget.style.background = "transparent";
+                }}
+              >
+                🤖 AI Agent
+              </button>
 
               <button
                 style={{
@@ -96,6 +127,9 @@ export default function Layout({
 
         <div style={{ padding: "24px" }}>{children}</div>
       </div>
+
+      <ChatbotPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+
     </div>
   );
 }
