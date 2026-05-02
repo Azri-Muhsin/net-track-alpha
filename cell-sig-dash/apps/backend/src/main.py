@@ -741,8 +741,7 @@ async def get_rig_health_timeseries(
 
         if temp_c is None and rsrp_dbm is None:
             continue
-            
-        import random
+
         accel = doc.get("accel")
         if accel and isinstance(accel, dict):
             x = accel.get("x", 0)
